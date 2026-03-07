@@ -112,6 +112,7 @@ export const resolveTranscriptForLink = async (
     transcription: deps.transcription ?? null,
     falApiKey: deps.falApiKey,
     groqApiKey: deps.groqApiKey,
+    geminiApiKey: deps.geminiApiKey,
     openaiApiKey: deps.openaiApiKey,
   });
 
@@ -124,6 +125,7 @@ export const resolveTranscriptForLink = async (
     transcription,
     falApiKey: transcription.falApiKey,
     groqApiKey: transcription.groqApiKey,
+    geminiApiKey: transcription.geminiApiKey,
     openaiApiKey: transcription.openaiApiKey,
     mediaCache: deps.mediaCache ?? null,
     resolveTwitterCookies: deps.resolveTwitterCookies ?? null,

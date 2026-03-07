@@ -191,7 +191,9 @@ describe("transcription/whisper", () => {
 
     expect(result.text).toBeNull();
     expect(result.provider).toBeNull();
-    expect(result.error?.message).toContain("GROQ_API_KEY, OPENAI_API_KEY, or FAL_KEY");
+    expect(result.error?.message).toContain(
+      "GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, or FAL_KEY",
+    );
   });
 
   it("transcribes small files via transcribeMediaFileWithWhisper (no chunking)", async () => {
@@ -470,7 +472,9 @@ describe("transcription/whisper", () => {
         falApiKey: null,
       });
       expect(result.text).toBeNull();
-      expect(result.error?.message).toContain("GROQ_API_KEY, OPENAI_API_KEY, or FAL_KEY");
+      expect(result.error?.message).toContain(
+        "GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, or FAL_KEY",
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

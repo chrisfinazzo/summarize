@@ -20,7 +20,7 @@ Fast summaries from URLs, files, and media. Works in the terminal, a Chrome Side
 
 - URLs, files, and media: web pages, PDFs, images, audio/video, YouTube, podcasts, RSS.
 - Slide extraction for video sources (YouTube/direct media) with OCR + timestamped cards.
-- Transcript-first media flow: published transcripts when available, Whisper fallback when not.
+- Transcript-first media flow: published transcripts when available, then Groq/local/Gemini/OpenAI/FAL transcription fallback when not.
 - Streaming output with Markdown rendering, metrics, and cache-aware status.
 - Local, paid, and free models: OpenAI‑compatible local endpoints, paid providers, plus an OpenRouter free preset.
 - Output modes: Markdown/text, JSON diagnostics, extract-only, metrics, timing, and cost estimates.
@@ -134,6 +134,7 @@ Install these if you want media-heavy features:
 - `ffmpeg`: required for `--slides` and many local media/transcription flows
 - `yt-dlp`: required for YouTube slide extraction and some remote media flows
 - `tesseract`: optional OCR for `--slides-ocr`
+- `GEMINI_API_KEY`: optional; enables Gemini audio/video transcription, including larger uploads via the Gemini Files API
 
 macOS (Homebrew):
 

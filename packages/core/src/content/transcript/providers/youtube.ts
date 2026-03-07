@@ -73,7 +73,7 @@ export const fetchTranscript = async (
   }
   if (mode === "yt-dlp" && !hasYtDlpCredentials) {
     throw new Error(
-      "Missing transcription provider for --youtube yt-dlp (install whisper-cpp or set OPENAI_API_KEY/FAL_KEY)",
+      "Missing transcription provider for --youtube yt-dlp (install whisper-cpp or set GROQ_API_KEY/GEMINI_API_KEY/OPENAI_API_KEY/FAL_KEY)",
     );
   }
 
@@ -206,11 +206,11 @@ export const fetchTranscript = async (
     }
   }
 
-  // Try yt-dlp (audio download + OpenAI/FAL transcription) if mode is 'auto', 'no-auto', or 'yt-dlp'
+  // Try yt-dlp (audio download + Groq/Gemini/OpenAI/FAL transcription) if mode is 'auto', 'no-auto', or 'yt-dlp'
   if (mode === "yt-dlp" || mode === "no-auto" || (mode === "auto" && canRunYtDlp)) {
     if (mode === "no-auto" && !canRunYtDlp) {
       throw new Error(
-        "--youtube no-auto requires yt-dlp and a transcription provider (whisper-cpp, OPENAI_API_KEY, or FAL_KEY) for fallback",
+        "--youtube no-auto requires yt-dlp and a transcription provider (whisper-cpp, GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, or FAL_KEY) for fallback",
       );
     }
     if (mode === "auto") {

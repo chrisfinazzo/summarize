@@ -30,6 +30,7 @@ const baseOptions = {
   youtubeTranscriptMode: "auto" as const,
   ytDlpPath: null,
   groqApiKey: null,
+  geminiApiKey: null,
   falApiKey: null,
   openaiApiKey: null,
 };
@@ -37,6 +38,10 @@ const baseOptions = {
 describe("YouTube transcript provider module", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv("SUMMARIZE_DISABLE_LOCAL_WHISPER_CPP", "1");
+    vi.stubEnv("GEMINI_API_KEY", "");
+    vi.stubEnv("GOOGLE_GENERATIVE_AI_API_KEY", "");
+    vi.stubEnv("GOOGLE_API_KEY", "");
     api.extractYoutubeiTranscriptConfig.mockReturnValue(null);
     api.fetchTranscriptFromTranscriptEndpoint.mockResolvedValue(null);
     captions.fetchTranscriptFromCaptionTracks.mockResolvedValue(null);
@@ -223,6 +228,26 @@ describe("YouTube transcript provider module", () => {
     expect(result.attemptedProviders).toEqual(["captionTracks", "unavailable"]);
     expect(ytdlp.fetchTranscriptWithYtDlp).not.toHaveBeenCalled();
     expect(apify.fetchTranscriptWithApify).not.toHaveBeenCalled();
+  });
+
+  it("treats Gemini as a valid yt-dlp transcription credential in auto mode", async () => {
+    api.extractYoutubeiTranscriptConfig.mockReturnValue(null);
+
+    await fetchTranscript(
+      {
+        url: "https://www.youtube.com/watch?v=abcdefghijk",
+        html: "<html></html>",
+        resourceKey: null,
+      },
+      {
+        ...baseOptions,
+        youtubeTranscriptMode: "auto",
+        ytDlpPath: "/usr/bin/yt-dlp",
+        geminiApiKey: "GEMINI",
+      },
+    );
+
+    expect(ytdlp.fetchTranscriptWithYtDlp).toHaveBeenCalled();
   });
 
   it("tries yt-dlp before apify in auto mode (apify last resort)", async () => {

@@ -26,17 +26,7 @@ export function createTranscriptProgressRenderer({
     downloadedBytes: number;
     totalBytes: number | null;
     startedAtMs: number | null;
-    whisperProviderHint:
-      | "cpp"
-      | "onnx"
-      | "groq"
-      | "groq->openai"
-      | "groq->fal"
-      | "groq->openai->fal"
-      | "openai"
-      | "fal"
-      | "openai->fal"
-      | "unknown";
+    whisperProviderHint: string;
     mediaKind: "video" | "audio" | "unknown";
     whisperModelId: string | null;
     whisperProcessedSeconds: number | null;
@@ -175,13 +165,21 @@ export function createTranscriptProgressRenderer({
   const formatProvider = (hint: typeof state.whisperProviderHint) => {
     if (hint === "cpp") return "Whisper.cpp";
     if (hint === "onnx") return "ONNX (Parakeet/Canary)";
+    const labelForPart = (part: string, chained: boolean) => {
+      if (part === "groq") return "Whisper/Groq";
+      if (part === "gemini") return "Gemini";
+      if (part === "openai") return "Whisper/OpenAI";
+      if (part === "fal") return chained ? "FAL" : "Whisper/FAL";
+      return part;
+    };
+    if (hint.includes("->")) {
+      const parts = hint.split("->");
+      return parts.map((part) => labelForPart(part, parts.length > 1)).join("→");
+    }
     if (hint === "groq") return "Whisper/Groq";
-    if (hint === "groq->openai") return "Whisper/Groq→OpenAI";
-    if (hint === "groq->fal") return "Whisper/Groq→FAL";
-    if (hint === "groq->openai->fal") return "Whisper/Groq→OpenAI→FAL";
+    if (hint === "gemini") return "Gemini";
     if (hint === "openai") return "Whisper/OpenAI";
     if (hint === "fal") return "Whisper/FAL";
-    if (hint === "openai->fal") return "Whisper/OpenAI→FAL";
     return "Whisper";
   };
 

@@ -143,6 +143,30 @@ describe("tty transcript progress renderer", () => {
     vi.useRealTimers();
   });
 
+  it("renders Gemini chain labels generically", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(5_000);
+
+    const setText = vi.fn();
+    const { onProgress } = createTranscriptProgressRenderer({ spinner: { setText } });
+
+    onProgress({
+      kind: "transcript-whisper-start",
+      url: "https://example.com",
+      service: "podcast",
+      providerHint: "groq->gemini->openai",
+      modelId: "groq/whisper-large-v3-turbo->google/gemini-2.5-flash->whisper-1",
+      totalDurationSeconds: 10,
+      parts: null,
+    });
+    const line = setText.mock.calls.at(-1)?.[0] ?? "";
+    expect(line).toContain(
+      "Whisper/Groq→Gemini→Whisper/OpenAI, groq/whisper-large-v3-turbo->google/gemini-2.5-flash->whisper-1",
+    );
+
+    vi.useRealTimers();
+  });
+
   it("updates OSC progress determinately when totals are known", () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);

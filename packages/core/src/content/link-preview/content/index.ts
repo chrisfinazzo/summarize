@@ -2,6 +2,7 @@ import type { FirecrawlScrapeResult, LinkPreviewDeps } from "../deps.js";
 import type { CacheMode, FirecrawlDiagnostics, TranscriptResolution } from "../types.js";
 import type { ExtractedLinkContent, FetchLinkContentOptions, MarkdownMode } from "./types.js";
 import { resolveTranscriptForLink } from "../../transcript/index.js";
+import { resolveTranscriptionAvailability } from "../../transcript/providers/transcription-start.js";
 import { resolveTranscriptionConfig } from "../../transcript/transcription-config.js";
 import { isDirectMediaUrl, isYouTubeUrl } from "../../url.js";
 import { normalizeForPrompt } from "./cleaner.js";
@@ -57,6 +58,7 @@ export async function fetchLinkContent(
     transcription: deps.transcription ?? null,
     falApiKey: deps.falApiKey,
     groqApiKey: deps.groqApiKey,
+    geminiApiKey: deps.geminiApiKey,
     openaiApiKey: deps.openaiApiKey,
   });
   const timeoutMs = resolveTimeoutMs(options);
@@ -75,9 +77,12 @@ export async function fetchLinkContent(
 
   const spotifyEpisodeId = extractSpotifyEpisodeId(url);
   if (spotifyEpisodeId) {
-    if (!transcription.openaiApiKey && !transcription.falApiKey) {
+    const transcriptionAvailability = await resolveTranscriptionAvailability({
+      transcription,
+    });
+    if (!transcriptionAvailability.hasAnyProvider) {
       throw new Error(
-        "Spotify episode transcription requires OPENAI_API_KEY or FAL_KEY (Whisper); otherwise you may only get a captcha/recaptcha HTML page.",
+        "Spotify episode transcription requires a transcription provider (install whisper-cpp or set GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, or FAL_KEY); otherwise you may only get a captcha/recaptcha HTML page.",
       );
     }
 
@@ -135,9 +140,12 @@ export async function fetchLinkContent(
 
   const appleIds = extractApplePodcastIds(url);
   if (appleIds) {
-    if (!transcription.openaiApiKey && !transcription.falApiKey) {
+    const transcriptionAvailability = await resolveTranscriptionAvailability({
+      transcription,
+    });
+    if (!transcriptionAvailability.hasAnyProvider) {
       throw new Error(
-        "Apple Podcasts transcription requires OPENAI_API_KEY or FAL_KEY (Whisper); otherwise you may only get a slow/blocked HTML page.",
+        "Apple Podcasts transcription requires a transcription provider (install whisper-cpp or set GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, or FAL_KEY); otherwise you may only get a slow/blocked HTML page.",
       );
     }
 

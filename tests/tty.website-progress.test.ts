@@ -215,6 +215,19 @@ describe("tty website progress", () => {
       kind: "transcript-whisper-start",
       url: "https://podcasts.example/episode",
       service: "podcast",
+      providerHint: "gemini",
+      modelId: "google/gemini-2.5-flash",
+      totalDurationSeconds: 30,
+      parts: null,
+    });
+    expect(setText).toHaveBeenLastCalledWith(
+      expect.stringContaining("Gemini, google/gemini-2.5-flash"),
+    );
+
+    progress.onProgress({
+      kind: "transcript-whisper-start",
+      url: "https://podcasts.example/episode",
+      service: "podcast",
       providerHint: "unknown",
       modelId: null,
       totalDurationSeconds: null,

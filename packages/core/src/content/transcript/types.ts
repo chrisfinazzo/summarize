@@ -29,6 +29,7 @@ export interface ProviderFetchOptions {
   transcription?: TranscriptionConfig;
   falApiKey?: string | null;
   groqApiKey?: string | null;
+  geminiApiKey?: string | null;
   openaiApiKey?: string | null;
   mediaCache?: MediaCache | null;
   resolveTwitterCookies?: ResolveTwitterCookies | null;

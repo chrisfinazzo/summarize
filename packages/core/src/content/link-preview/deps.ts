@@ -32,9 +32,17 @@ export type TranscriptionProviderHint =
   | "cpp"
   | "onnx"
   | "groq"
+  | "groq->gemini"
   | "groq->openai"
   | "groq->fal"
+  | "groq->gemini->openai"
+  | "groq->gemini->fal"
   | "groq->openai->fal"
+  | "groq->gemini->openai->fal"
+  | "gemini"
+  | "gemini->openai"
+  | "gemini->fal"
+  | "gemini->openai->fal"
   | "openai"
   | "fal"
   | "openai->fal"
@@ -188,6 +196,7 @@ export interface LinkPreviewDeps {
   transcription?: TranscriptionConfig | null;
   falApiKey?: string | null;
   groqApiKey?: string | null;
+  geminiApiKey?: string | null;
   openaiApiKey?: string | null;
   convertHtmlToMarkdown: ConvertHtmlToMarkdown | null;
   transcriptCache: TranscriptCache | null;

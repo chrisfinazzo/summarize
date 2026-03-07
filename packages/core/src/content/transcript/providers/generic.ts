@@ -1,6 +1,7 @@
 import { load } from "cheerio";
 import type { TranscriptSegment } from "../../link-preview/types.js";
 import type { ProviderContext, ProviderFetchOptions, ProviderResult } from "../types.js";
+import { buildMissingTranscriptionProviderNote } from "../../../transcription/whisper/provider-setup.js";
 import {
   isTwitterBroadcastUrl,
   isTwitterStatusUrl,
@@ -118,7 +119,7 @@ export const fetchTranscript = async (
       source: null,
       attemptedProviders,
       metadata: { provider: "generic", kind: "twitter", reason: "missing_transcription_keys" },
-      notes: "Missing transcription provider (install whisper-cpp or set OPENAI_API_KEY/FAL_KEY)",
+      notes: buildMissingTranscriptionProviderNote(),
     };
   }
 
@@ -363,9 +364,7 @@ async function fetchDirectMediaTranscript({
     transcription,
   });
   if (!transcriptionAvailability.hasAnyProvider) {
-    notes.push(
-      "Missing transcription provider (install whisper-cpp or set GROQ_API_KEY/OPENAI_API_KEY/FAL_KEY)",
-    );
+    notes.push(buildMissingTranscriptionProviderNote());
     return null;
   }
 

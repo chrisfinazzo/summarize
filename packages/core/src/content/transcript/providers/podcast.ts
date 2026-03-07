@@ -1,5 +1,6 @@
 import type { ProviderContext, ProviderFetchOptions, ProviderResult } from "../types.js";
 import type { PodcastFlowContext } from "./podcast/flow-context.js";
+import { buildMissingTranscriptionProviderNote } from "../../../transcription/whisper/provider-setup.js";
 import { isDirectMediaUrl } from "../../url.js";
 import { resolveTranscriptionConfig } from "../transcription-config.js";
 import {
@@ -63,7 +64,7 @@ export const fetchTranscript = async (
     source: null,
     attemptedProviders,
     metadata: { provider: "podcast", reason: "missing_transcription_keys" },
-    notes: "Missing transcription provider (install whisper-cpp or set OPENAI_API_KEY/FAL_KEY)",
+    notes: buildMissingTranscriptionProviderNote(),
   });
 
   const ensureTranscriptionProvider = (): ProviderResult | null => {

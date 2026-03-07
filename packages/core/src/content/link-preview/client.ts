@@ -28,6 +28,7 @@ export interface LinkPreviewClientOptions {
   transcription?: Partial<TranscriptionConfig> | null;
   falApiKey?: string | null;
   groqApiKey?: string | null;
+  geminiApiKey?: string | null;
   openaiApiKey?: string | null;
   convertHtmlToMarkdown?: ConvertHtmlToMarkdown | null;
   transcriptCache?: TranscriptCache | null;
@@ -47,12 +48,14 @@ export function createLinkPreviewClient(options: LinkPreviewClientOptions = {}):
   const ytDlpPath = typeof options.ytDlpPath === "string" ? options.ytDlpPath : null;
   const falApiKey = typeof options.falApiKey === "string" ? options.falApiKey : null;
   const groqApiKey = typeof options.groqApiKey === "string" ? options.groqApiKey : null;
+  const geminiApiKey = typeof options.geminiApiKey === "string" ? options.geminiApiKey : null;
   const openaiApiKey = typeof options.openaiApiKey === "string" ? options.openaiApiKey : null;
   const transcription = resolveTranscriptionConfig({
     env,
     transcription: options.transcription ?? null,
     falApiKey,
     groqApiKey,
+    geminiApiKey,
     openaiApiKey,
   });
   const convertHtmlToMarkdown: ConvertHtmlToMarkdown | null = options.convertHtmlToMarkdown ?? null;
@@ -75,6 +78,7 @@ export function createLinkPreviewClient(options: LinkPreviewClientOptions = {}):
         transcription,
         falApiKey,
         groqApiKey,
+        geminiApiKey,
         openaiApiKey,
         convertHtmlToMarkdown,
         transcriptCache,

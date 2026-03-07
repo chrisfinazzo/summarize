@@ -350,7 +350,7 @@ export function buildTranscriberHelp(): string {
     "Usage: summarize transcriber setup [--model parakeet|canary] [--theme <name>]",
     "",
     "Configures local ONNX transcription by printing the required env vars.",
-    "Auto selection prefers ONNX when configured, then whisper.cpp, then OpenAI/FAL.",
+    "Auto selection prefers Groq first, then ONNX/whisper.cpp, then Gemini/OpenAI/FAL.",
     "",
     "Options:",
     "  --model <name>   parakeet (default) or canary",

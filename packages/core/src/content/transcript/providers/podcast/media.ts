@@ -37,6 +37,7 @@ export async function transcribeMediaUrl({
   filenameHint,
   durationSecondsHint,
   groqApiKey,
+  geminiApiKey,
   openaiApiKey,
   falApiKey,
   notes,
@@ -49,6 +50,7 @@ export async function transcribeMediaUrl({
   filenameHint: string;
   durationSecondsHint: number | null;
   groqApiKey?: string | null;
+  geminiApiKey?: string | null;
   openaiApiKey?: string | null;
   falApiKey?: string | null;
   notes: string[];
@@ -63,6 +65,7 @@ export async function transcribeMediaUrl({
     env,
     transcription,
     groqApiKey,
+    geminiApiKey,
     openaiApiKey,
     falApiKey,
   });
@@ -128,6 +131,7 @@ export async function transcribeMediaUrl({
       mediaType,
       filename,
       groqApiKey: effectiveTranscription.groqApiKey,
+      geminiApiKey: effectiveTranscription.geminiApiKey,
       openaiApiKey: effectiveTranscription.openaiApiKey,
       falApiKey: effectiveTranscription.falApiKey,
       totalDurationSeconds: durationSecondsHint,
@@ -183,6 +187,7 @@ export async function transcribeMediaUrl({
       mediaType,
       filename,
       groqApiKey: effectiveTranscription.groqApiKey,
+      geminiApiKey: effectiveTranscription.geminiApiKey,
       openaiApiKey: effectiveTranscription.openaiApiKey,
       falApiKey: effectiveTranscription.falApiKey,
       totalDurationSeconds: durationSecondsHint,
@@ -242,6 +247,7 @@ export async function transcribeMediaUrl({
       mediaType,
       filename,
       groqApiKey: effectiveTranscription.groqApiKey,
+      geminiApiKey: effectiveTranscription.geminiApiKey,
       openaiApiKey: effectiveTranscription.openaiApiKey,
       falApiKey: effectiveTranscription.falApiKey,
       totalDurationSeconds: probedDurationSeconds,

@@ -41,6 +41,9 @@ describe("yt-dlp transcript helper", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv("SUMMARIZE_DISABLE_LOCAL_WHISPER_CPP", "1");
+    vi.stubEnv("GEMINI_API_KEY", "");
+    vi.stubEnv("GOOGLE_GENERATIVE_AI_API_KEY", "");
+    vi.stubEnv("GOOGLE_API_KEY", "");
     fsMock.stat.mockResolvedValue({ size: 5 });
     fsMock.readFile.mockResolvedValue(Buffer.from("audio"));
     fsMock.unlink.mockResolvedValue(undefined);
@@ -75,7 +78,9 @@ describe("yt-dlp transcript helper", () => {
     });
 
     expect(result.text).toBeNull();
-    expect(result.error?.message).toMatch(/GROQ_API_KEY, OPENAI_API_KEY, or FAL_KEY/);
+    expect(result.error?.message).toMatch(
+      /GROQ_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, or FAL_KEY/,
+    );
   });
 
   it("returns a helpful error when yt-dlp fails to download", async () => {

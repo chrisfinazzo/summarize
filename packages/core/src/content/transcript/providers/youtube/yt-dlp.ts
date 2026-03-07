@@ -10,6 +10,7 @@ import {
   type TranscriptionProvider,
   transcribeMediaFileWithWhisper,
 } from "../../../../transcription/whisper.js";
+import { buildMissingTranscriptionProviderMessage } from "../../../../transcription/whisper/provider-setup.js";
 import { ProgressKind } from "../../../link-preview/deps.js";
 import {
   resolveTranscriptionConfig,
@@ -34,6 +35,7 @@ type YtDlpRequest = {
   transcription?: Partial<TranscriptionConfig> | null;
   env?: Record<string, string | undefined>;
   groqApiKey?: string | null;
+  geminiApiKey?: string | null;
   openaiApiKey?: string | null;
   falApiKey?: string | null;
   url: string;
@@ -54,6 +56,7 @@ export const fetchTranscriptWithYtDlp = async ({
   transcription,
   env,
   groqApiKey,
+  geminiApiKey,
   openaiApiKey,
   falApiKey,
   url,
@@ -68,6 +71,7 @@ export const fetchTranscriptWithYtDlp = async ({
     env,
     transcription,
     groqApiKey,
+    geminiApiKey,
     openaiApiKey,
     falApiKey,
   });
@@ -89,9 +93,7 @@ export const fetchTranscriptWithYtDlp = async ({
     return {
       text: null,
       provider: null,
-      error: new Error(
-        "No transcription providers available (install whisper-cpp or set GROQ_API_KEY, OPENAI_API_KEY, or FAL_KEY)",
-      ),
+      error: new Error(buildMissingTranscriptionProviderMessage()),
       notes,
     };
   }
@@ -190,6 +192,7 @@ export const fetchTranscriptWithYtDlp = async ({
       mediaType: "audio/mpeg",
       filename: "audio.mp3",
       groqApiKey: effectiveTranscription.groqApiKey,
+      geminiApiKey: effectiveTranscription.geminiApiKey,
       openaiApiKey: effectiveTranscription.openaiApiKey,
       falApiKey: effectiveTranscription.falApiKey,
       totalDurationSeconds: probedDurationSeconds,

@@ -15,8 +15,10 @@ import {
 import { DEFAULT_SEGMENT_SECONDS, MAX_OPENAI_UPLOAD_BYTES } from "./constants.js";
 import { transcribeWithFal } from "./fal.js";
 import { isFfmpegAvailable, runFfmpegSegment, transcodeBytesToMp3 } from "./ffmpeg.js";
+import { transcribeFileWithGemini, transcribeWithGemini } from "./gemini.js";
 import { shouldRetryGroqViaFfmpeg, transcribeWithGroq } from "./groq.js";
 import { shouldRetryOpenAiViaFfmpeg, transcribeWithOpenAi } from "./openai.js";
+import { buildMissingTranscriptionProviderMessage } from "./provider-setup.js";
 import { ensureWhisperFilenameExtension, formatBytes, readFirstBytes, wrapError } from "./utils.js";
 import { isWhisperCppReady, transcribeWithWhisperCppFile } from "./whisper-cpp.js";
 
@@ -39,6 +41,7 @@ async function transcribeChunkedFileWithWhisper({
   filePath,
   groqApiKey,
   skipGroq,
+  geminiApiKey,
   openaiApiKey,
   falApiKey,
   segmentSeconds,
@@ -49,6 +52,7 @@ async function transcribeChunkedFileWithWhisper({
   filePath: string;
   groqApiKey: string | null;
   skipGroq: boolean;
+  geminiApiKey?: string | null;
   openaiApiKey: string | null;
   falApiKey: string | null;
   segmentSeconds: number;
@@ -96,6 +100,7 @@ async function transcribeChunkedFileWithWhisper({
         filename: name,
         groqApiKey,
         skipGroq,
+        geminiApiKey,
         openaiApiKey,
         falApiKey,
         onProgress: null,
@@ -131,6 +136,7 @@ export async function transcribeMediaWithWhisper({
   filename,
   groqApiKey,
   skipGroq = false,
+  geminiApiKey = null,
   openaiApiKey,
   falApiKey,
   totalDurationSeconds = null,
@@ -142,6 +148,7 @@ export async function transcribeMediaWithWhisper({
   filename: string | null;
   groqApiKey: string | null;
   skipGroq?: boolean;
+  geminiApiKey?: string | null;
   openaiApiKey: string | null;
   falApiKey: string | null;
   totalDurationSeconds?: number | null;
@@ -191,7 +198,9 @@ export async function transcribeMediaWithWhisper({
   }
 
   if (groqError) {
-    notes.push(`Groq transcription failed; falling back to local/OpenAI: ${groqError.message}`);
+    notes.push(
+      `Groq transcription failed; falling back to local/Gemini/OpenAI: ${groqError.message}`,
+    );
   }
 
   // 2. ONNX (local)
@@ -257,16 +266,31 @@ export async function transcribeMediaWithWhisper({
     }
   }
 
-  // 4. OpenAI / FAL (cloud fallbacks)
-  if (!groqApiKey && !openaiApiKey && !falApiKey) {
+  // 4. Gemini / OpenAI / FAL (cloud fallbacks)
+  if (!groqApiKey && !geminiApiKey && !openaiApiKey && !falApiKey) {
     return {
       text: null,
       provider: null,
-      error: new Error(
-        "No transcription providers available (install whisper-cpp or set GROQ_API_KEY, OPENAI_API_KEY, or FAL_KEY)",
-      ),
+      error: new Error(buildMissingTranscriptionProviderMessage()),
       notes,
     };
+  }
+
+  let geminiError: Error | null = null;
+  if (geminiApiKey) {
+    try {
+      const text = await transcribeWithGemini(bytes, mediaType, filename, geminiApiKey, { env });
+      if (text) {
+        return { text, provider: "gemini", error: null, notes };
+      }
+      geminiError = new Error("Gemini transcription returned empty text");
+    } catch (error) {
+      geminiError = wrapError("Gemini transcription failed", error);
+    }
+  }
+
+  if (geminiError) {
+    notes.push(`Gemini transcription failed; falling back to OpenAI/FAL: ${geminiError.message}`);
   }
 
   if (openaiApiKey && bytes.byteLength > MAX_OPENAI_UPLOAD_BYTES) {
@@ -281,6 +305,7 @@ export async function transcribeMediaWithWhisper({
           filename,
           groqApiKey,
           openaiApiKey,
+          geminiApiKey,
           falApiKey,
           segmentSeconds: DEFAULT_SEGMENT_SECONDS,
           onProgress,
@@ -376,14 +401,18 @@ export async function transcribeMediaWithWhisper({
   }
 
   const terminalError =
-    openaiError ?? groqError ?? new Error("No transcription providers available");
+    openaiError ?? geminiError ?? groqError ?? new Error("No transcription providers available");
   const terminalProvider: TranscriptionProvider | null = openaiError
     ? "openai"
-    : groqError
-      ? "groq"
-      : openaiApiKey
-        ? "openai"
-        : null;
+    : geminiError
+      ? "gemini"
+      : groqError
+        ? "groq"
+        : openaiApiKey
+          ? "openai"
+          : geminiApiKey
+            ? "gemini"
+            : null;
   return { text: null, provider: terminalProvider, error: terminalError, notes };
 }
 
@@ -392,6 +421,7 @@ export async function transcribeMediaFileWithWhisper({
   mediaType,
   filename,
   groqApiKey,
+  geminiApiKey = null,
   openaiApiKey,
   falApiKey,
   segmentSeconds = DEFAULT_SEGMENT_SECONDS,
@@ -403,6 +433,7 @@ export async function transcribeMediaFileWithWhisper({
   mediaType: string;
   filename: string | null;
   groqApiKey: string | null;
+  geminiApiKey?: string | null;
   openaiApiKey: string | null;
   falApiKey: string | null;
   segmentSeconds?: number;
@@ -442,6 +473,7 @@ export async function transcribeMediaFileWithWhisper({
           filePath,
           groqApiKey,
           skipGroq: false,
+          geminiApiKey,
           openaiApiKey,
           falApiKey,
           segmentSeconds,
@@ -455,7 +487,7 @@ export async function transcribeMediaFileWithWhisper({
         }
         groqError = chunked.error ?? new Error("Groq chunked transcription failed");
         notes.push(
-          `Groq chunked transcription failed; falling back to local/OpenAI: ${groqError.message}`,
+          `Groq chunked transcription failed; falling back to local/Gemini/OpenAI: ${groqError.message}`,
         );
       } else {
         groqError = new Error(
@@ -530,8 +562,28 @@ export async function transcribeMediaFileWithWhisper({
     }
   }
 
-  // 4. OpenAI / FAL (cloud fallbacks)
-  if (!openaiApiKey && !falApiKey) {
+  // 4. Gemini / OpenAI / FAL (cloud fallbacks)
+  let geminiError: Error | null = null;
+  if (geminiApiKey) {
+    try {
+      const text = await transcribeFileWithGemini({
+        filePath,
+        mediaType,
+        filename,
+        apiKey: geminiApiKey,
+        env,
+      });
+      if (text) {
+        return { text, provider: "gemini", error: null, notes };
+      }
+      geminiError = new Error("Gemini transcription returned empty text");
+    } catch (error) {
+      geminiError = wrapError("Gemini transcription failed", error);
+      notes.push(`Gemini transcription failed; falling back to OpenAI/FAL: ${geminiError.message}`);
+    }
+  }
+
+  if (!geminiApiKey && !openaiApiKey && !falApiKey) {
     if (groqError) {
       return {
         text: null,
@@ -543,9 +595,7 @@ export async function transcribeMediaFileWithWhisper({
     return {
       text: null,
       provider: null,
-      error: new Error(
-        "No transcription providers available (install whisper-cpp or set GROQ_API_KEY, OPENAI_API_KEY, or FAL_KEY)",
-      ),
+      error: new Error(buildMissingTranscriptionProviderMessage()),
       notes,
     };
   }
@@ -563,6 +613,7 @@ export async function transcribeMediaFileWithWhisper({
         filename,
         groqApiKey,
         skipGroq: skipGroqInNestedCalls,
+        geminiApiKey,
         openaiApiKey,
         falApiKey,
         env,
@@ -575,6 +626,7 @@ export async function transcribeMediaFileWithWhisper({
       filePath,
       groqApiKey,
       skipGroq: skipGroqInNestedCalls,
+      geminiApiKey,
       openaiApiKey,
       falApiKey,
       segmentSeconds,
@@ -599,6 +651,7 @@ export async function transcribeMediaFileWithWhisper({
     filename,
     groqApiKey,
     skipGroq: skipGroqInNestedCalls,
+    geminiApiKey,
     openaiApiKey,
     falApiKey,
     env,

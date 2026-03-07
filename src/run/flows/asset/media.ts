@@ -55,6 +55,8 @@ export async function summarizeMediaFile(
 ): Promise<void> {
   // Check if basic transcription setup is available
   const groqKey = ctx.env.GROQ_API_KEY;
+  const geminiKey =
+    ctx.env.GEMINI_API_KEY ?? ctx.env.GOOGLE_GENERATIVE_AI_API_KEY ?? ctx.env.GOOGLE_API_KEY;
   const openaiKey = ctx.env.OPENAI_API_KEY;
   const falKey = ctx.env.FAL_KEY;
 
@@ -79,7 +81,8 @@ export async function summarizeMediaFile(
     ? true
     : await isBinaryAvailable("whisper-cli");
 
-  const hasAnyTranscriptionProvider = groqKey || openaiKey || falKey || hasLocalWhisper;
+  const hasAnyTranscriptionProvider =
+    groqKey || geminiKey || openaiKey || falKey || hasLocalWhisper;
 
   if (!hasAnyTranscriptionProvider) {
     throw new Error(`Media file transcription requires one of the following:
@@ -87,13 +90,16 @@ export async function summarizeMediaFile(
 1. Groq Whisper (fast, free tier):
    Set GROQ_API_KEY=gsk_...
 
-2. OpenAI Whisper:
+2. Gemini audio transcription:
+   Set GEMINI_API_KEY=...
+
+3. OpenAI Whisper:
    Set OPENAI_API_KEY=sk-...
 
-3. FAL Whisper:
+4. FAL Whisper:
    Set FAL_KEY=...
 
-4. Local whisper.cpp (recommended, free):
+5. Local whisper.cpp (recommended, free):
    brew install whisper-cpp
    Ensure whisper-cli is on your PATH (or set SUMMARIZE_WHISPER_CPP_BINARY)
 

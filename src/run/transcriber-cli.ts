@@ -150,7 +150,7 @@ export async function handleTranscriberCliRequest({
   stdout.write(`${heading("Transcriber setup")}\n`);
   stdout.write(`${label("Transcriber mode:")} ${value(transcriberEnv)}\n`);
   stdout.write(
-    `${label("Auto order:")} ${value("ONNX (parakeet then canary) -> whisper.cpp -> OpenAI/FAL")}\n`,
+    `${label("Auto order:")} ${value("Groq -> ONNX (parakeet then canary) -> whisper.cpp -> Gemini -> OpenAI -> FAL")}\n`,
   );
   stdout.write("\n");
   for (const entry of onnxStatus) {

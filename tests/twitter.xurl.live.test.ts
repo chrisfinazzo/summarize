@@ -37,7 +37,11 @@ function resolveLiveIdentity(): { userId: string; username: string } {
   return { userId, username };
 }
 
-function resolveRecentTweets(): { username: string; tweets: TimelineTweet[]; mediaByKey: Map<string, string> } {
+function resolveRecentTweets(): {
+  username: string;
+  tweets: TimelineTweet[];
+  mediaByKey: Map<string, string>;
+} {
   const { userId, username } = resolveLiveIdentity();
   const timeline = readJson<TimelineResponse>(
     `/2/users/${userId}/tweets?max_results=20&exclude=retweets,replies&expansions=attachments.media_keys&tweet.fields=attachments&media.fields=type`,
@@ -56,10 +60,8 @@ function resolveLiveTweetUrl(): string {
   const { username, tweets } = resolveRecentTweets();
   const tweetId =
     tweets.find(
-      (tweet) =>
-        typeof tweet.id === "string" && (tweet.attachments?.media_keys?.length ?? 0) === 0,
-    )?.id ??
-    tweets.find((tweet) => typeof tweet.id === "string" && tweet.id)?.id;
+      (tweet) => typeof tweet.id === "string" && (tweet.attachments?.media_keys?.length ?? 0) === 0,
+    )?.id ?? tweets.find((tweet) => typeof tweet.id === "string" && tweet.id)?.id;
   if (!tweetId) {
     throw new Error("xurl live test could not find a recent tweet");
   }
@@ -129,7 +131,9 @@ describe("live xurl tweet reader", () => {
       });
 
       expect(result.client).toBe("xurl");
-      expect(result.media?.preferredUrl ?? result.media?.urls?.[0]).toMatch(/^https:\/\/video\.twimg\.com\//);
+      expect(result.media?.preferredUrl ?? result.media?.urls?.[0]).toMatch(
+        /^https:\/\/video\.twimg\.com\//,
+      );
     },
     180_000,
   );
