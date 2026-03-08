@@ -1,5 +1,10 @@
 import type { CliProvider } from "./config.js";
 import { normalizeGatewayStyleModelId, parseGatewayStyleModelId } from "./llm/model-id.js";
+import {
+  type RequiredModelEnv,
+  requiredEnvForCliProvider,
+  resolveRequiredEnvForModelId,
+} from "./llm/provider-capabilities.js";
 
 const DEFAULT_CLI_MODELS: Record<CliProvider, string> = {
   claude: "sonnet",
@@ -133,14 +138,10 @@ export function parseRequestedModelId(raw: string): RequestedModel {
     const cliProvider = providerRaw as CliProvider;
     const requestedModel = parts.slice(2).join("/").trim();
     const cliModel = requestedModel.length > 0 ? requestedModel : DEFAULT_CLI_MODELS[cliProvider];
-    const requiredEnv =
-      cliProvider === "claude"
-        ? "CLI_CLAUDE"
-        : cliProvider === "codex"
-          ? "CLI_CODEX"
-          : cliProvider === "gemini"
-            ? "CLI_GEMINI"
-            : "CLI_AGENT";
+    const requiredEnv = requiredEnvForCliProvider(cliProvider) as Extract<
+      RequiredModelEnv,
+      "CLI_CLAUDE" | "CLI_CODEX" | "CLI_GEMINI" | "CLI_AGENT"
+    >;
     const userModelId = `cli/${cliProvider}/${cliModel}`;
     return {
       kind: "fixed",
@@ -163,18 +164,15 @@ export function parseRequestedModelId(raw: string): RequestedModel {
 
   const userModelId = normalizeGatewayStyleModelId(trimmed);
   const parsed = parseGatewayStyleModelId(userModelId);
-  const requiredEnv =
-    parsed.provider === "xai"
-      ? "XAI_API_KEY"
-      : parsed.provider === "google"
-        ? "GEMINI_API_KEY"
-        : parsed.provider === "anthropic"
-          ? "ANTHROPIC_API_KEY"
-          : parsed.provider === "zai"
-            ? "Z_AI_API_KEY"
-            : parsed.provider === "nvidia"
-              ? "NVIDIA_API_KEY"
-              : "OPENAI_API_KEY";
+  const requiredEnv = resolveRequiredEnvForModelId(userModelId) as Extract<
+    RequiredModelEnv,
+    | "XAI_API_KEY"
+    | "OPENAI_API_KEY"
+    | "GEMINI_API_KEY"
+    | "ANTHROPIC_API_KEY"
+    | "Z_AI_API_KEY"
+    | "NVIDIA_API_KEY"
+  >;
   return {
     kind: "fixed",
     transport: "native",

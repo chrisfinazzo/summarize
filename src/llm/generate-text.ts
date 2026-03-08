@@ -3,7 +3,11 @@ import { completeSimple, streamSimple } from "@mariozechner/pi-ai";
 import { createUnsupportedFunctionalityError } from "./errors.js";
 import { parseGatewayStyleModelId } from "./model-id.js";
 import { type Prompt, userTextAndImageMessage } from "./prompt.js";
-import { supportsDocumentAttachments, supportsStreaming } from "./provider-capabilities.js";
+import {
+  resolveOpenAiCompatibleClientConfigForProvider,
+  supportsDocumentAttachments,
+  supportsStreaming,
+} from "./provider-capabilities.js";
 import {
   completeAnthropicDocument,
   completeAnthropicText,
@@ -258,11 +262,10 @@ export async function generateTextWithModelId({
     }
 
     if (parsed.provider === "openai") {
-      const openaiConfig = resolveOpenAiClientConfig({
-        apiKeys: {
-          openaiApiKey: apiKeys.openaiApiKey,
-          openrouterApiKey: apiKeys.openrouterApiKey,
-        },
+      const openaiConfig = resolveOpenAiCompatibleClientConfigForProvider({
+        provider: "openai",
+        openaiApiKey: apiKeys.openaiApiKey,
+        openrouterApiKey: apiKeys.openrouterApiKey,
         forceOpenRouter,
         openaiBaseUrlOverride,
         forceChatCompletions,
@@ -339,11 +342,10 @@ export async function generateTextWithModelId({
   const context = promptToContext(prompt);
 
   const resolveOpenAiConfig = (): OpenAiClientConfig =>
-    resolveOpenAiClientConfig({
-      apiKeys: {
-        openaiApiKey: apiKeys.openaiApiKey,
-        openrouterApiKey: apiKeys.openrouterApiKey,
-      },
+    resolveOpenAiCompatibleClientConfigForProvider({
+      provider: "openai",
+      openaiApiKey: apiKeys.openaiApiKey,
+      openrouterApiKey: apiKeys.openrouterApiKey,
       forceOpenRouter,
       openaiBaseUrlOverride,
       forceChatCompletions,
@@ -446,14 +448,22 @@ export async function generateTextWithModelId({
       }
 
       if (parsed.provider === "zai") {
-        const apiKey = apiKeys.openaiApiKey;
-        if (!apiKey) throw new Error("Missing Z_AI_API_KEY for zai/... model");
+        const openaiConfig = resolveOpenAiCompatibleClientConfigForProvider({
+          provider: "zai",
+          openaiApiKey: apiKeys.openaiApiKey,
+          openrouterApiKey: apiKeys.openrouterApiKey,
+          openaiBaseUrlOverride: zaiBaseUrlOverride ?? openaiBaseUrlOverride,
+        });
         const model = resolveZaiModel({
           modelId: parsed.model,
           context,
-          openaiBaseUrlOverride: zaiBaseUrlOverride ?? openaiBaseUrlOverride,
+          openaiBaseUrlOverride: openaiConfig.baseURL,
         });
-        const result = await completeSimpleText({ model, apiKey, signal: controller.signal });
+        const result = await completeSimpleText({
+          model,
+          apiKey: openaiConfig.apiKey,
+          signal: controller.signal,
+        });
         return {
           text: result.text,
           canonicalModelId: parsed.canonical,
@@ -463,10 +473,22 @@ export async function generateTextWithModelId({
       }
 
       if (parsed.provider === "nvidia") {
-        const apiKey = apiKeys.openaiApiKey;
-        if (!apiKey) throw new Error("Missing NVIDIA_API_KEY for nvidia/... model");
-        const model = resolveNvidiaModel({ modelId: parsed.model, context, openaiBaseUrlOverride });
-        const result = await completeSimpleText({ model, apiKey, signal: controller.signal });
+        const openaiConfig = resolveOpenAiCompatibleClientConfigForProvider({
+          provider: "nvidia",
+          openaiApiKey: apiKeys.openaiApiKey,
+          openrouterApiKey: apiKeys.openrouterApiKey,
+          openaiBaseUrlOverride,
+        });
+        const model = resolveNvidiaModel({
+          modelId: parsed.model,
+          context,
+          openaiBaseUrlOverride: openaiConfig.baseURL,
+        });
+        const result = await completeSimpleText({
+          model,
+          apiKey: openaiConfig.apiKey,
+          signal: controller.signal,
+        });
         return {
           text: result.text,
           canonicalModelId: parsed.canonical,
@@ -821,37 +843,14 @@ export async function streamTextWithContext({
     }
 
     if (parsed.provider === "openai" || parsed.provider === "zai" || parsed.provider === "nvidia") {
-      const openaiConfig: OpenAiClientConfig = (() => {
-        if (parsed.provider === "openai") {
-          return resolveOpenAiClientConfig({
-            apiKeys: {
-              openaiApiKey: apiKeys.openaiApiKey,
-              openrouterApiKey: apiKeys.openrouterApiKey,
-            },
-            forceOpenRouter,
-            openaiBaseUrlOverride,
-            forceChatCompletions,
-          });
-        }
-        if (parsed.provider === "zai") {
-          const key = apiKeys.openaiApiKey;
-          if (!key) throw new Error("Missing Z_AI_API_KEY for zai/... model");
-          return {
-            apiKey: key,
-            baseURL: openaiBaseUrlOverride ?? "https://api.z.ai/api/paas/v4",
-            useChatCompletions: true,
-            isOpenRouter: false,
-          };
-        }
-        const key = apiKeys.openaiApiKey;
-        if (!key) throw new Error("Missing NVIDIA_API_KEY for nvidia/... model");
-        return {
-          apiKey: key,
-          baseURL: openaiBaseUrlOverride ?? "https://integrate.api.nvidia.com/v1",
-          useChatCompletions: true,
-          isOpenRouter: false,
-        };
-      })();
+      const openaiConfig: OpenAiClientConfig = resolveOpenAiCompatibleClientConfigForProvider({
+        provider: parsed.provider,
+        openaiApiKey: apiKeys.openaiApiKey,
+        openrouterApiKey: apiKeys.openrouterApiKey,
+        forceOpenRouter,
+        openaiBaseUrlOverride,
+        forceChatCompletions,
+      });
 
       const model = resolveOpenAiModel({ modelId: parsed.model, context, openaiConfig });
       const stream = streamSimple(model, context, {

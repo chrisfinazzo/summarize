@@ -3,9 +3,12 @@ import {
   DEFAULT_AUTO_CLI_ORDER,
   DEFAULT_CLI_MODELS,
   envHasRequiredKey,
+  isVideoUnderstandingCapableModelId,
   parseCliProviderName,
   requiredEnvForCliProvider,
   requiredEnvForGatewayProvider,
+  resolveOpenAiCompatibleClientConfigForProvider,
+  resolveRequiredEnvForModelId,
   supportsDocumentAttachments,
   supportsStreaming,
 } from "../src/llm/provider-capabilities.js";
@@ -23,6 +26,8 @@ describe("llm provider capabilities", () => {
     expect(supportsDocumentAttachments("google")).toBe(true);
     expect(supportsDocumentAttachments("xai")).toBe(false);
     expect(supportsStreaming("anthropic")).toBe(true);
+    expect(isVideoUnderstandingCapableModelId("google/gemini-3-flash")).toBe(true);
+    expect(isVideoUnderstandingCapableModelId("openai/gpt-5.2")).toBe(false);
   });
 
   it("handles provider env aliases", () => {
@@ -36,5 +41,27 @@ describe("llm provider capabilities", () => {
     ).toBe(true);
     expect(envHasRequiredKey({ ZAI_API_KEY: "z" }, "Z_AI_API_KEY")).toBe(true);
     expect(envHasRequiredKey({}, "OPENAI_API_KEY")).toBe(false);
+  });
+
+  it("resolves provider requirements and OpenAI-compatible config centrally", () => {
+    expect(resolveRequiredEnvForModelId("cli/gemini")).toBe("CLI_GEMINI");
+    expect(resolveRequiredEnvForModelId("openrouter/openai/gpt-5-mini")).toBe("OPENROUTER_API_KEY");
+    expect(resolveRequiredEnvForModelId("nvidia/meta/llama-3.1-8b-instruct")).toBe(
+      "NVIDIA_API_KEY",
+    );
+
+    expect(
+      resolveOpenAiCompatibleClientConfigForProvider({
+        provider: "zai",
+        openaiApiKey: "z-key",
+        openrouterApiKey: null,
+        openaiBaseUrlOverride: null,
+      }),
+    ).toEqual({
+      apiKey: "z-key",
+      baseURL: "https://api.z.ai/api/paas/v4",
+      useChatCompletions: true,
+      isOpenRouter: false,
+    });
   });
 });

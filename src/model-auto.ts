@@ -11,9 +11,10 @@ import {
   DEFAULT_AUTO_CLI_ORDER,
   DEFAULT_CLI_MODELS,
   envHasRequiredKey,
+  isVideoUnderstandingCapableModelId,
   parseCliProviderName,
   requiredEnvForCliProvider,
-  requiredEnvForGatewayProvider,
+  resolveRequiredEnvForModelId,
   type RequiredModelEnv,
 } from "./llm/provider-capabilities.js";
 import type { LiteLlmCatalog } from "./pricing/litellm.js";
@@ -277,13 +278,7 @@ function normalizeOpenRouterModelId(raw: string): string | null {
 }
 
 function requiredEnvForCandidate(modelId: string): AutoModelAttempt["requiredEnv"] {
-  if (isCandidateCli(modelId)) {
-    const parsed = parseCliCandidate(modelId);
-    return parsed ? requiredEnvForCliProvider(parsed.provider) : "CLI_CLAUDE";
-  }
-  if (isCandidateOpenRouter(modelId)) return "OPENROUTER_API_KEY";
-  const parsed = parseGatewayStyleModelId(normalizeGatewayStyleModelId(modelId));
-  return requiredEnvForGatewayProvider(parsed.provider);
+  return resolveRequiredEnvForModelId(modelId);
 }
 
 export function envHasKey(
@@ -436,15 +431,6 @@ function estimateCostUsd({
   return Number.isFinite(cost) ? cost : null;
 }
 
-function isVideoUnderstandingCapable(modelId: string): boolean {
-  try {
-    const parsed = parseGatewayStyleModelId(normalizeGatewayStyleModelId(modelId));
-    return parsed.provider === "google";
-  } catch {
-    return false;
-  }
-}
-
 export function buildAutoModelAttempts(input: AutoSelectionInput): AutoModelAttempt[] {
   const baseCandidates = resolveRuleCandidates({
     kind: input.kind,
@@ -476,7 +462,7 @@ export function buildAutoModelAttempts(input: AutoSelectionInput): AutoModelAtte
 
     const shouldSkipForVideo =
       input.requiresVideoUnderstanding &&
-      (explicitOpenRouter || explicitCli || !isVideoUnderstandingCapable(modelRaw));
+      (explicitOpenRouter || explicitCli || !isVideoUnderstandingCapableModelId(modelRaw));
     if (shouldSkipForVideo) {
       continue;
     }
