@@ -1,4 +1,3 @@
-import { buildMissingTranscriptionProviderNote } from "../../../transcription/whisper/provider-setup.js";
 import { isDirectMediaUrl } from "../../url.js";
 import { resolveTranscriptionConfig } from "../transcription-config.js";
 import type { ProviderContext, ProviderFetchOptions, ProviderResult } from "../types.js";
@@ -35,7 +34,10 @@ import {
 } from "./podcast/rss.js";
 import { fetchSpotifyTranscript } from "./podcast/spotify-flow.js";
 import { looksLikeBlockedHtml } from "./podcast/spotify.js";
-import { resolveTranscriptionAvailability } from "./transcription-start.js";
+import {
+  buildMissingTranscriptionProviderResult,
+  resolveTranscriptProviderCapabilities,
+} from "./transcription-capability.js";
 
 export const canHandle = ({ url, html }: ProviderContext): boolean => {
   // Direct media URLs (e.g., .mp3, .wav) should be handled by the generic provider
@@ -58,20 +60,18 @@ export const fetchTranscript = async (
     if (!attemptedProviders.includes(provider)) attemptedProviders.push(provider);
   };
 
-  const transcriptionAvailability = await resolveTranscriptionAvailability({
+  const transcriptionCapabilities = await resolveTranscriptProviderCapabilities({
     transcription,
-  });
-
-  const missingTranscriptionProviderResult = (): ProviderResult => ({
-    text: null,
-    source: null,
-    attemptedProviders,
-    metadata: { provider: "podcast", reason: "missing_transcription_keys" },
-    notes: buildMissingTranscriptionProviderNote(),
+    ytDlpPath: options.ytDlpPath,
   });
 
   const ensureTranscriptionProvider = (): ProviderResult | null => {
-    return !transcriptionAvailability.hasAnyProvider ? missingTranscriptionProviderResult() : null;
+    return !transcriptionCapabilities.canTranscribe
+      ? buildMissingTranscriptionProviderResult({
+          attemptedProviders,
+          metadata: { provider: "podcast", reason: "missing_transcription_keys" },
+        })
+      : null;
   };
 
   const progress = {

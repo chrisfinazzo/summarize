@@ -1,6 +1,6 @@
 import { resolveTranscriptionConfig } from "../transcription-config.js";
 import type { ProviderContext, ProviderFetchOptions, ProviderResult } from "../types.js";
-import { resolveTranscriptionAvailability } from "./transcription-start.js";
+import { resolveTranscriptProviderCapabilities } from "./transcription-capability.js";
 import {
   buildUnavailableResult,
   loadYoutubeHtml,
@@ -27,12 +27,11 @@ export const fetchTranscript = async (
   const html = await loadYoutubeHtml(context, options);
   const mode = options.youtubeTranscriptMode;
   const progress = typeof options.onProgress === "function" ? options.onProgress : null;
-  const transcriptionAvailability = await resolveTranscriptionAvailability({
+  const transcriptionCapabilities = await resolveTranscriptProviderCapabilities({
     transcription,
+    ytDlpPath: options.ytDlpPath,
   });
-  const hasYtDlpCredentials = transcriptionAvailability.hasAnyProvider;
-  // yt-dlp fallback only makes sense if we have the binary *and* some transcription path.
-  const canRunYtDlp = Boolean(options.ytDlpPath && hasYtDlpCredentials);
+  const canRunYtDlp = transcriptionCapabilities.canRunYtDlp;
   const pushHint = (hint: string) => {
     progress?.({ kind: "transcript-start", url, service: "youtube", hint });
   };
@@ -42,9 +41,9 @@ export const fetchTranscript = async (
       "Missing yt-dlp binary for --youtube yt-dlp (set YT_DLP_PATH or install yt-dlp)",
     );
   }
-  if (mode === "yt-dlp" && !hasYtDlpCredentials) {
+  if (mode === "yt-dlp" && !transcriptionCapabilities.canTranscribe) {
     throw new Error(
-      "Missing transcription provider for --youtube yt-dlp (install whisper-cpp or set GROQ_API_KEY/GEMINI_API_KEY/OPENAI_API_KEY/FAL_KEY)",
+      "Missing transcription provider for --youtube yt-dlp (install whisper-cpp or set GROQ_API_KEY/ASSEMBLYAI_API_KEY/GEMINI_API_KEY/OPENAI_API_KEY/FAL_KEY)",
     );
   }
 

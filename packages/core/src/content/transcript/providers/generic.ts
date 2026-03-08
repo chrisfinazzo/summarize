@@ -1,5 +1,4 @@
 import { load } from "cheerio";
-import { buildMissingTranscriptionProviderNote } from "../../../transcription/whisper/provider-setup.js";
 import {
   isTwitterBroadcastUrl,
   isTwitterStatusUrl,
@@ -15,7 +14,10 @@ import {
 } from "../parse.js";
 import { resolveTranscriptionConfig, type TranscriptionConfig } from "../transcription-config.js";
 import type { ProviderContext, ProviderFetchOptions, ProviderResult } from "../types.js";
-import { resolveTranscriptionAvailability } from "./transcription-start.js";
+import {
+  buildMissingTranscriptionProviderResult,
+  resolveTranscriptProviderCapabilities,
+} from "./transcription-capability.js";
 
 export const canHandle = (): boolean => true;
 
@@ -110,17 +112,15 @@ export const fetchTranscript = async (
     };
   }
 
-  const transcriptionAvailability = await resolveTranscriptionAvailability({
+  const transcriptionCapabilities = await resolveTranscriptProviderCapabilities({
     transcription,
+    ytDlpPath: options.ytDlpPath,
   });
-  if (!transcriptionAvailability.hasAnyProvider) {
-    return {
-      text: null,
-      source: null,
+  if (!transcriptionCapabilities.canTranscribe) {
+    return buildMissingTranscriptionProviderResult({
       attemptedProviders,
       metadata: { provider: "generic", kind: "twitter", reason: "missing_transcription_keys" },
-      notes: buildMissingTranscriptionProviderNote(),
-    };
+    });
   }
 
   attemptedProviders.push("yt-dlp");
@@ -360,11 +360,12 @@ async function fetchDirectMediaTranscript({
     return null;
   }
 
-  const transcriptionAvailability = await resolveTranscriptionAvailability({
+  const transcriptionCapabilities = await resolveTranscriptProviderCapabilities({
     transcription,
+    ytDlpPath: options.ytDlpPath,
   });
-  if (!transcriptionAvailability.hasAnyProvider) {
-    notes.push(buildMissingTranscriptionProviderNote());
+  if (!transcriptionCapabilities.canTranscribe) {
+    notes.push(transcriptionCapabilities.missingProviderNote);
     return null;
   }
 
