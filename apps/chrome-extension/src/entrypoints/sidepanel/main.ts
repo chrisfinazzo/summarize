@@ -1319,11 +1319,19 @@ function renderEmptySummaryState() {
   const wrapper = document.createElement("section");
   wrapper.className = "renderEmpty";
   wrapper.dataset.emptyState = "true";
-  const title = document.createElement("h2");
-  title.textContent = state.title;
+  const label = document.createElement("div");
+  label.className = "renderEmpty__label";
+  label.textContent = state.label;
   const message = document.createElement("p");
+  message.className = "renderEmpty__message";
   message.textContent = state.message;
-  wrapper.append(title, message);
+  wrapper.append(label, message);
+  if (state.detail) {
+    const detail = document.createElement("p");
+    detail.className = "renderEmpty__detail";
+    detail.textContent = state.detail;
+    wrapper.append(detail);
+  }
   renderMarkdownHostEl.replaceChildren(wrapper);
 }
 

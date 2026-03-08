@@ -12,8 +12,9 @@ describe("sidepanel summary empty state", () => {
         hasSlides: false,
       }),
     ).toEqual({
-      title: "Ready to summarize",
-      message: "Click Summarize to analyze Example Video.",
+      label: "Ready",
+      message: "Click Summarize to start.",
+      detail: "Example Video",
     });
   });
 
@@ -27,8 +28,25 @@ describe("sidepanel summary empty state", () => {
         hasSlides: false,
       }),
     ).toEqual({
-      title: "Summarizing this page...",
-      message: "Waiting for Example Video.",
+      label: "Loading",
+      message: "Preparing summary",
+      detail: "Example Video",
+    });
+  });
+
+  it("shows a quiet no-page state without extra detail", () => {
+    expect(
+      buildSummaryEmptyState({
+        tabTitle: null,
+        tabUrl: null,
+        autoSummarize: false,
+        phase: "idle",
+        hasSlides: false,
+      }),
+    ).toEqual({
+      label: "No page",
+      message: "Open a page to summarize.",
+      detail: null,
     });
   });
 

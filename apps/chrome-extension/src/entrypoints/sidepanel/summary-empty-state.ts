@@ -9,8 +9,9 @@ type SummaryEmptyStateInput = {
 };
 
 export type SummaryEmptyState = {
-  title: string;
+  label: string;
   message: string;
+  detail: string | null;
 };
 
 export function buildSummaryEmptyState(input: SummaryEmptyStateInput): SummaryEmptyState | null {
@@ -19,20 +20,23 @@ export function buildSummaryEmptyState(input: SummaryEmptyStateInput): SummaryEm
   const subject = input.tabTitle?.trim() || input.tabUrl?.trim() || "this page";
   if (!input.tabUrl) {
     return {
-      title: "Open a page to summarize",
-      message: "Summaries and slide output appear here.",
+      label: "No page",
+      message: "Open a page to summarize.",
+      detail: null,
     };
   }
 
   if (input.phase === "connecting" || input.phase === "streaming" || input.autoSummarize) {
     return {
-      title: "Summarizing this page...",
-      message: `Waiting for ${subject}.`,
+      label: "Loading",
+      message: "Preparing summary",
+      detail: subject,
     };
   }
 
   return {
-    title: "Ready to summarize",
-    message: `Click Summarize to analyze ${subject}.`,
+    label: "Ready",
+    message: "Click Summarize to start.",
+    detail: subject,
   };
 }

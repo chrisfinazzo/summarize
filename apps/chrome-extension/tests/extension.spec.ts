@@ -1474,7 +1474,7 @@ test("sidepanel clears summary when tab url changes", async ({
     });
 
     await expect(page.locator("#title")).toHaveText("New Title");
-    await expect(page.locator("#render")).toContainText("Ready to summarize");
+    await expect(page.locator("#render")).toContainText("Click Summarize to start.");
     await expect(page.locator("#render")).toContainText("Click Summarize to analyze New Title.");
     await expect(page.locator("#render")).not.toContainText("Hello world");
     assertNoErrors(harness);
@@ -1751,8 +1751,9 @@ test("sidepanel clears cached slides when switching from a cached YouTube video 
 
     await sendBgMessage(harness, { type: "ui:state", state: tabBState });
     await expect(page.locator("#title")).toHaveText("Bravo Tab");
-    await expect(page.locator("#render")).toContainText("Ready to summarize");
-    await expect(page.locator("#render")).toContainText("Click Summarize to analyze Bravo Tab.");
+    const emptyState = page.locator('#render [data-empty-state="true"]');
+    await expect(emptyState).toContainText("Click Summarize to start.");
+    await expect(emptyState).toContainText("Bravo Tab");
     await expect(page.locator("#render")).not.toContainText("Summary A");
     await expect.poll(async () => (await getPanelSlideDescriptions(page)).length).toBe(0);
 
@@ -2081,8 +2082,8 @@ test("sidepanel shows a ready state instead of going blank when switching tabs m
       }),
     });
 
-    await expect(page.locator("#render")).toContainText("Ready to summarize");
-    await expect(page.locator("#render")).toContainText("Click Summarize to analyze Bravo Tab.");
+    await expect(page.locator("#render")).toContainText("Click Summarize to start.");
+    await expect(page.locator("#render")).toContainText("Bravo Tab");
     await expect(page.locator("#render")).not.toContainText("Summary A");
 
     assertNoErrors(harness);
@@ -2110,8 +2111,8 @@ test("sidepanel shows a loading state instead of going blank while waiting for a
       }),
     });
 
-    await expect(page.locator("#render")).toContainText("Summarizing this page...");
-    await expect(page.locator("#render")).toContainText("Waiting for Bravo Tab.");
+    await expect(page.locator("#render")).toContainText("Preparing summary");
+    await expect(page.locator("#render")).toContainText("Bravo Tab");
 
     assertNoErrors(harness);
   } finally {
@@ -2173,7 +2174,7 @@ test("sidepanel resumes a pending summary run when returning to the original tab
       },
     });
 
-    await expect(page.locator("#render")).toContainText("Ready to summarize");
+    await expect(page.locator("#render")).toContainText("Click Summarize to start.");
     await expect(page.locator("#render")).toContainText("Click Summarize to analyze Bravo Tab.");
     await expect(page.locator("#render")).not.toContainText("Summary A");
 
