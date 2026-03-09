@@ -337,7 +337,10 @@ describe("slides summary controller", () => {
     streamOptions?.onRender?.("");
     streamOptions?.onDone?.();
     expect(controller.getComplete()).toBe(true);
-    expect(updateSlideSummaryFromMarkdown).not.toHaveBeenCalled();
+    expect(updateSlideSummaryFromMarkdown).toHaveBeenCalledWith("", {
+      preserveIfEmpty: true,
+      source: "slides",
+    });
 
     streamOptions?.onError?.(new Error("boom"));
     controller.clearError();

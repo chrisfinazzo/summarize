@@ -10,6 +10,8 @@ type SidepanelTestHooks = {
   getRunId?: () => string | null;
   getSummaryMarkdown?: () => string;
   getSlideDescriptions?: () => Array<[number, string]>;
+  getSlideSummaryEntries?: () => Array<[number, string]>;
+  getSlideTitleEntries?: () => Array<[number, string]>;
   getPhase?: () => PanelPhase;
   getModel?: () => string | null;
   getSlidesTimeline?: () => Array<{ index: number; timestamp: number | null }>;
@@ -39,6 +41,8 @@ export function registerSidepanelTestHooks(options: {
   getRunId: () => string | null;
   getSummaryMarkdown: () => string;
   getSlideDescriptions: () => Array<[number, string]>;
+  getSlideSummaryEntries: () => Array<[number, string]>;
+  getSlideTitleEntries: () => Array<[number, string]>;
   getPhase: () => PanelPhase;
   getModel: () => string | null;
   getSlidesTimeline: () => Array<{ index: number; timestamp: number | null }>;
@@ -73,6 +77,8 @@ export function registerSidepanelTestHooks(options: {
   hooks.getRunId = options.getRunId;
   hooks.getSummaryMarkdown = options.getSummaryMarkdown;
   hooks.getSlideDescriptions = options.getSlideDescriptions;
+  hooks.getSlideSummaryEntries = options.getSlideSummaryEntries;
+  hooks.getSlideTitleEntries = options.getSlideTitleEntries;
   hooks.getPhase = options.getPhase;
   hooks.getModel = options.getModel;
   hooks.getSlidesTimeline = options.getSlidesTimeline;

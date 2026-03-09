@@ -48,7 +48,7 @@ import { friendlyFetchError } from "./setup-runtime";
 import { hasResolvedSlidesPayload } from "./slides-pending";
 import { createSidepanelSlidesRuntime } from "./slides-runtime";
 import { shouldSeedPlannedSlidesForRun } from "./slides-seed-policy";
-import { selectMarkdownForLayout, splitSlidesMarkdown, type SlideTextMode } from "./slides-state";
+import { selectMarkdownForLayout, type SlideTextMode } from "./slides-state";
 import { createSlidesTextController } from "./slides-text-controller";
 import { createSlidesViewRuntime } from "./slides-view-runtime";
 import { createSummarizeControlRuntime } from "./summarize-control-runtime";
@@ -867,6 +867,8 @@ registerSidepanelTestHooks({
   getRunId: () => panelState.runId,
   getSummaryMarkdown: () => panelState.summaryMarkdown ?? "",
   getSlideDescriptions: () => slidesTextController.getDescriptionEntries(),
+  getSlideSummaryEntries: () => slidesTextController.getSummaryEntries(),
+  getSlideTitleEntries: () => Array.from(slidesTextController.getTitles().entries()),
   getPhase: () => panelState.phase,
   getModel: () => panelState.lastMeta.model ?? null,
   getSlidesTimeline: () =>

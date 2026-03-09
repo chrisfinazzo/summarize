@@ -114,6 +114,28 @@ export async function getPanelSlideDescriptions(page: Page): Promise<Array<[numb
   });
 }
 
+export async function getPanelSlideSummaryEntries(page: Page): Promise<Array<[number, string]>> {
+  return await page.evaluate(() => {
+    const hooks = (
+      window as typeof globalThis & {
+        __summarizeTestHooks?: { getSlideSummaryEntries?: () => Array<[number, string]> };
+      }
+    ).__summarizeTestHooks;
+    return hooks?.getSlideSummaryEntries?.() ?? [];
+  });
+}
+
+export async function getPanelSlideTitleEntries(page: Page): Promise<Array<[number, string]>> {
+  return await page.evaluate(() => {
+    const hooks = (
+      window as typeof globalThis & {
+        __summarizeTestHooks?: { getSlideTitleEntries?: () => Array<[number, string]> };
+      }
+    ).__summarizeTestHooks;
+    return hooks?.getSlideTitleEntries?.() ?? [];
+  });
+}
+
 export async function waitForApplySlidesHook(page: Page) {
   await page.waitForFunction(
     () => {

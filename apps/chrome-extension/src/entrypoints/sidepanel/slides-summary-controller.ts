@@ -116,16 +116,12 @@ export function createSlidesSummaryController(options: SlidesSummaryControllerOp
     },
     onRender: (markdown) => {
       state.markdown = markdown;
-      if (
-        options.getSlidesEnabled() &&
-        getEffectiveInputMode() === "video" &&
-        options.getPanelState().slides
-      ) {
+      if (options.getSlidesEnabled() && getEffectiveInputMode() === "video") {
         options.updateSlideSummaryFromMarkdown(markdown, {
           preserveIfEmpty: true,
           source: "slides",
         });
-        if (options.getPanelState().summaryMarkdown) {
+        if (options.getPanelState().summaryMarkdown && options.getPanelState().slides) {
           options.renderInlineSlidesFallback();
         }
       }

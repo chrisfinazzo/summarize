@@ -683,7 +683,6 @@ test("sidepanel keeps slide summaries isolated when switching YouTube videos mid
     await expect.poll(async () => (await getPanelSlidesTimeline(page)).length).toBe(2);
 
     await applyBgMessage({ type: "ui:state", state: tabBState });
-    await expect(page.locator("#title")).toHaveText("Bravo Tab");
     await applyBgMessage({
       type: "run:start",
       run: {
@@ -700,6 +699,7 @@ test("sidepanel keeps slide summaries isolated when switching YouTube videos mid
       runId: "slides-b",
       url: bravoUrl,
     });
+    await expect(page.locator("#title")).toHaveText("Bravo Tab");
     await applySlidesPayload(page, bravoPayload);
 
     await expect
