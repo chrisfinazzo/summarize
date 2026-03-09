@@ -17,7 +17,6 @@ import {
   getPanelSlideDescriptions,
   getPanelSlideSummaryEntries,
   getPanelSlideTitleEntries,
-  getPanelSlidesSummaryMarkdown,
   getPanelSlidesTimeline,
   waitForApplySlidesHook,
   waitForSlidesRuntimeHooks,
@@ -127,7 +126,7 @@ test("sidepanel shows transcript-first gallery cards and hides the big summary b
     const page = await openExtensionPage(harness, "sidepanel.html", "#title");
     await waitForPanelPort(page);
     await waitForSettingsHydratedHook(page);
-    await waitForApplySlidesHook(page);
+    await waitForSlidesRuntimeHooks(page);
 
     await sendBgMessage(harness, {
       type: "ui:state",
@@ -167,6 +166,14 @@ test("sidepanel shows transcript-first gallery cards and hides the big summary b
         { timeout: 10_000 },
       )
       .toContain("Helia returns to command.");
+    await page.evaluate(() => {
+      const hooks = (
+        window as typeof globalThis & {
+          __summarizeTestHooks?: { forceRenderSlides?: () => number };
+        }
+      ).__summarizeTestHooks;
+      hooks?.forceRenderSlides?.();
+    });
     await expect(page.locator(".slideGallery")).toHaveCount(1);
     await expect(page.locator(".slideStrip")).toHaveCount(0);
 
