@@ -4,6 +4,7 @@ import type { StreamControllerOptions } from "../apps/chrome-extension/src/entry
 import type { PanelState, UiState } from "../apps/chrome-extension/src/entrypoints/sidepanel/types";
 
 let streamOptions: StreamControllerOptions | null = null;
+let streamOptionsList: StreamControllerOptions[] = [];
 let streamStartSpy: ReturnType<typeof vi.fn> | null = null;
 let streamAbortSpy: ReturnType<typeof vi.fn> | null = null;
 let streamAbortSpies: Array<ReturnType<typeof vi.fn>> = [];
@@ -11,6 +12,7 @@ let streamAbortSpies: Array<ReturnType<typeof vi.fn>> = [];
 vi.mock("../apps/chrome-extension/src/entrypoints/sidepanel/stream-controller", () => ({
   createStreamController: (options: StreamControllerOptions) => {
     streamOptions = options;
+    streamOptionsList.push(options);
     streamStartSpy = vi.fn(async () => {});
     streamAbortSpy = vi.fn();
     streamAbortSpies.push(streamAbortSpy);
@@ -65,6 +67,7 @@ function buildPanelState(): PanelState {
 describe("slides summary controller", () => {
   beforeEach(() => {
     streamOptions = null;
+    streamOptionsList = [];
     streamStartSpy = null;
     streamAbortSpy = null;
     streamAbortSpies = [];
@@ -290,6 +293,61 @@ describe("slides summary controller", () => {
       source: "slides",
     });
     expect(renderMarkdown).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale callbacks after switching to a newer slides summary run", async () => {
+    const panelState = buildPanelState();
+    const updateSlideSummaryFromMarkdown = vi.fn();
+    const renderMarkdown = vi.fn();
+
+    const controller = createSlidesSummaryController({
+      getToken: async () => "token",
+      friendlyFetchError: (_error, fallback) => fallback,
+      panelUrlsMatch: (left, right) => left === right,
+      getPanelState: () => panelState,
+      getUiState: () => panelState.ui,
+      getActiveTabUrl: () => panelState.currentSource?.url ?? null,
+      getInputMode: () => "video",
+      getInputModeOverride: () => "video",
+      getSlidesEnabled: () => true,
+      getLengthValue: () => "medium",
+      getTranscriptTimedText: () => null,
+      clearSummarySource: vi.fn(),
+      updateSlideSummaryFromMarkdown,
+      renderMarkdown,
+      renderInlineSlidesFallback: vi.fn(),
+    });
+
+    await controller.start({ runId: "slides-a", url: "https://example.com/alpha" });
+    const alphaStream = streamOptionsList.at(-1);
+    expect(alphaStream).toBeTruthy();
+
+    panelState.currentSource = { url: "https://example.com/bravo", title: "Bravo" };
+    await controller.start({ runId: "slides-b", url: "https://example.com/bravo" });
+    const bravoStream = streamOptionsList.at(-1);
+    expect(bravoStream).toBeTruthy();
+    expect(bravoStream).not.toBe(alphaStream);
+
+    alphaStream?.onRender?.("Alpha stale summary");
+    alphaStream?.onDone?.();
+    expect(updateSlideSummaryFromMarkdown).not.toHaveBeenCalledWith("Alpha stale summary", {
+      preserveIfEmpty: true,
+      source: "slides",
+    });
+
+    bravoStream?.onRender?.("Bravo fresh summary");
+    bravoStream?.onDone?.();
+
+    expect(updateSlideSummaryFromMarkdown).toHaveBeenCalledWith("Bravo fresh summary", {
+      preserveIfEmpty: true,
+      source: "slides",
+    });
+    expect(updateSlideSummaryFromMarkdown).toHaveBeenLastCalledWith("Bravo fresh summary", {
+      preserveIfEmpty: false,
+      source: "slides",
+    });
+    expect(controller.getMarkdown()).toBe("Bravo fresh summary");
+    expect(controller.getComplete()).toBe(true);
   });
 
   it("covers empty, pending, and reset branches", async () => {
