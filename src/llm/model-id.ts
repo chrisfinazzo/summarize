@@ -45,6 +45,22 @@ const ANTHROPIC_MODEL_ALIASES: Record<string, string> = {
   "claude-opus-4": "claude-opus-4-0",
 };
 
+const OPENAI_MODEL_ALIASES: Record<string, string> = {
+  "gpt-5.4-mini": "gpt-5-mini",
+  "gpt-5.4-nano": "gpt-5-nano",
+};
+
+function normalizeOpenAiAlias(model: string): string {
+  const trimmed = model.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("openai/")) {
+    const alias = OPENAI_MODEL_ALIASES[lower.slice("openai/".length)];
+    return alias ? `openai/${alias}` : model;
+  }
+  const alias = OPENAI_MODEL_ALIASES[lower];
+  return alias ?? model;
+}
+
 export function normalizeGatewayStyleModelId(raw: string): string {
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
@@ -74,13 +90,13 @@ export function normalizeGatewayStyleModelId(raw: string): string {
     if (lower.startsWith("grok-")) return `xai/${trimmed}`;
     if (lower.startsWith("gemini-")) return `google/${trimmed}`;
     if (lower.startsWith("claude-")) return `anthropic/${trimmed}`;
-    return `openai/${trimmed}`;
+    return `openai/${normalizeOpenAiAlias(trimmed)}`;
   }
 
   const provider = lower.slice(0, slash);
   const model = trimmed.slice(slash + 1);
   if (provider === "github-copilot") {
-    const resolved = resolveGitHubCopilotBackendModelId(model);
+    const resolved = normalizeOpenAiAlias(resolveGitHubCopilotBackendModelId(model));
     if (resolved.trim().length === 0) {
       throw new Error("Missing model id after provider prefix");
     }
@@ -94,7 +110,9 @@ export function normalizeGatewayStyleModelId(raw: string): string {
   if (model.trim().length === 0) {
     throw new Error("Missing model id after provider prefix");
   }
-  return `${provider}/${model}`;
+  return provider === "openai"
+    ? `${provider}/${normalizeOpenAiAlias(model)}`
+    : `${provider}/${model}`;
 }
 
 export function parseGatewayStyleModelId(raw: string): ParsedModelId {

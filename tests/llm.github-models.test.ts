@@ -19,6 +19,8 @@ describe("github models helpers", () => {
 
   it("normalizes shorthand github-copilot model ids", () => {
     expect(resolveGitHubCopilotBackendModelId("gpt-5.4")).toBe("openai/gpt-5.4");
+    expect(resolveGitHubCopilotBackendModelId("gpt-5.4-mini")).toBe("openai/gpt-5.4-mini");
+    expect(resolveGitHubCopilotBackendModelId("gpt-5.4-nano")).toBe("openai/gpt-5.4-nano");
     expect(resolveGitHubCopilotBackendModelId("chatgpt-5")).toBe("openai/chatgpt-5");
     expect(resolveGitHubCopilotBackendModelId("o5")).toBe("openai/o5");
     expect(resolveGitHubCopilotBackendModelId("claude-sonnet-4.5")).toBe(
@@ -35,7 +37,7 @@ describe("github models helpers", () => {
     );
     expect(resolveGitHubCopilotBackendModelId(" mistral-large ")).toBe("mistral-large");
     expect(resolveGitHubCopilotBackendModelId("")).toBe("");
-    expect(resolveGitHubCopilotBackendModelId(" openai/gpt-4.1 ")).toBe("openai/gpt-4.1");
+    expect(resolveGitHubCopilotBackendModelId(" openai/gpt-5-chat ")).toBe("openai/gpt-5-chat");
   });
 
   it("adds github api headers without dropping existing ones", () => {
