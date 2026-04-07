@@ -107,6 +107,34 @@ describe("transcription/whisper", () => {
     return await import("../packages/core/src/transcription/whisper.js");
   };
 
+  const importWhisperWithGroqCurlFallback = async ({
+    responseBody,
+    statusCode = 200,
+  }: {
+    responseBody: string;
+    statusCode?: number;
+  }) => {
+    resetModules();
+    vi.doMock("node:child_process", () => ({
+      execFile: (
+        _file: string,
+        args: string[],
+        _options: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        const outputPath = args[args.indexOf("-o") + 1];
+        void writeFile(outputPath, responseBody, "utf8").then(() =>
+          callback(null, String(statusCode), ""),
+        );
+        return {} as ChildProcess;
+      },
+      spawn: () => {
+        throw new Error("spawn should not be used");
+      },
+    }));
+    return await import("../packages/core/src/transcription/whisper.js");
+  };
+
   it("maps media types to filename extensions for Whisper format detection", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const form = init?.body as FormData;
@@ -874,6 +902,41 @@ describe("transcription/whisper", () => {
       expect(result.notes.join(" ")).toContain("Groq");
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+
+  it("retries Groq via curl when fetch multipart gets a 403", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (!url.includes("groq.com")) {
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      }
+      return new Response('{"error":{"message":"Forbidden"}}', {
+        status: 403,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    try {
+      vi.stubGlobal("fetch", fetchMock);
+      const whisper = await importWhisperWithGroqCurlFallback({
+        responseBody: JSON.stringify({ text: "groq curl fallback" }),
+      });
+      const result = await whisper.transcribeMediaWithWhisper({
+        bytes: new Uint8Array([1, 2, 3]),
+        mediaType: "audio/ogg",
+        filename: "audio.ogg",
+        groqApiKey: "GROQ",
+        openaiApiKey: null,
+        falApiKey: null,
+      });
+
+      expect(result.text).toBe("groq curl fallback");
+      expect(result.provider).toBe("groq");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.doUnmock("node:child_process");
     }
   });
 
