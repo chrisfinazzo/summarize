@@ -35,7 +35,9 @@ function stripExistingPlatformConfig(data) {
     if (
       /^  url "[^"\n]+"$/.test(line) ||
       /^  sha256 "[^"\n]+"$/.test(line) ||
-      /^  depends_on arch: :arm64$/.test(line)
+      /^  depends_on arch: :arm64$/.test(line) ||
+      /^  depends_on :macos$/.test(line) ||
+      line === `  # ${LINUX_HOMEBREW_MESSAGE}`
     ) {
       index += 1;
       continue;
@@ -64,6 +66,9 @@ function findPlatformInsertIndex(lines) {
 
 function buildPlatformBlock({ urlArm, shaArm, urlX64, shaX64 }) {
   return [
+    `  # ${LINUX_HOMEBREW_MESSAGE}`,
+    "  depends_on :macos",
+    "",
     "  on_macos do",
     "    on_arm do",
     `      url "${urlArm}"`,
@@ -74,10 +79,6 @@ function buildPlatformBlock({ urlArm, shaArm, urlX64, shaX64 }) {
     `      url "${urlX64}"`,
     `      sha256 "${shaX64}"`,
     "    end",
-    "  end",
-    "",
-    "  on_linux do",
-    `    odie "${LINUX_HOMEBREW_MESSAGE}"`,
     "  end",
   ];
 }

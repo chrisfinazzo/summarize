@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  LINUX_HOMEBREW_MESSAGE,
-  updateFormulaForMacArtifacts,
-} from "../scripts/release-formula.js";
+import { LINUX_HOMEBREW_MESSAGE, updateFormulaForMacArtifacts } from "../scripts/release-formula.js";
 
 const urls = {
   urlArm: "https://example.com/summarize-macos-arm64.tar.gz",
@@ -29,12 +26,12 @@ end
     const output = updateFormulaForMacArtifacts(input, urls);
 
     expect(output).toContain("on_macos do");
-    expect(output).toContain("on_linux do");
+    expect(output).toContain(`# ${LINUX_HOMEBREW_MESSAGE}`);
+    expect(output).toContain("depends_on :macos");
     expect(output).toContain(`url "${urls.urlArm}"`);
     expect(output).toContain(`sha256 "${urls.shaArm}"`);
     expect(output).toContain(`url "${urls.urlX64}"`);
     expect(output).toContain(`sha256 "${urls.shaX64}"`);
-    expect(output).toContain(`odie "${LINUX_HOMEBREW_MESSAGE}"`);
     expect(output).not.toContain("old-arm");
     expect(output).not.toContain("old-x64");
   });
@@ -54,7 +51,8 @@ end
     expect(output).toContain("on_macos do");
     expect(output).toContain("on_arm do");
     expect(output).toContain("on_intel do");
-    expect(output).toContain("on_linux do");
+    expect(output).toContain(`# ${LINUX_HOMEBREW_MESSAGE}`);
+    expect(output).toContain("depends_on :macos");
     expect(output).toContain(`url "${urls.urlArm}"`);
     expect(output).toContain(`sha256 "${urls.shaArm}"`);
     expect(output).toContain(`url "${urls.urlX64}"`);
@@ -72,11 +70,11 @@ end
     const output = updateFormulaForMacArtifacts(input, urls);
 
     expect(output).toContain("on_macos do");
-    expect(output).toContain("on_linux do");
+    expect(output).toContain(`# ${LINUX_HOMEBREW_MESSAGE}`);
+    expect(output).toContain("depends_on :macos");
     expect(output).toContain(`url "${urls.urlArm}"`);
     expect(output).toContain(`sha256 "${urls.shaArm}"`);
     expect(output).toContain(`url "${urls.urlX64}"`);
     expect(output).toContain(`sha256 "${urls.shaX64}"`);
-    expect(output).toContain(`odie "${LINUX_HOMEBREW_MESSAGE}"`);
   });
 });
