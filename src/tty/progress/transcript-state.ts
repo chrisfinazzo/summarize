@@ -170,8 +170,9 @@ function renderWhisperLine(
   nowMs: number,
   theme?: ThemeRenderer | null,
 ): string {
-  const provider = formatProvider(state.whisperProviderHint);
-  const providerLabel = state.whisperModelId ? `${provider}, ${state.whisperModelId}` : provider;
+  const provider = formatProvider(firstChainPart(state.whisperProviderHint));
+  const modelId = firstChainPart(state.whisperModelId);
+  const providerLabel = modelId ? `${provider}, ${modelId}` : provider;
   const svc =
     state.service === "podcast" ? "podcast" : state.service === "youtube" ? "youtube" : "media";
   const elapsedMs = typeof state.startedAtMs === "number" ? nowMs - state.startedAtMs : 0;
@@ -262,14 +263,16 @@ function formatProvider(hint: string): string {
     if (part === "fal") return chained ? "FAL" : "Whisper/FAL";
     return part;
   };
-  if (hint.includes("->")) {
-    const parts = hint.split("->");
-    return parts.map((part) => labelForPart(part, parts.length > 1)).join("→");
-  }
   if (hint === "groq") return "Whisper/Groq";
   if (hint === "assemblyai") return "AssemblyAI";
   if (hint === "gemini") return "Gemini";
   if (hint === "openai") return "Whisper/OpenAI";
   if (hint === "fal") return "Whisper/FAL";
   return "Whisper";
+}
+
+function firstChainPart(value: string): string;
+function firstChainPart(value: string | null): string | null;
+function firstChainPart(value: string | null): string | null {
+  return value?.split("->", 1)[0]?.trim() || null;
 }

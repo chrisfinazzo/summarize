@@ -206,9 +206,8 @@ describe("tty website progress", () => {
       totalDurationSeconds: 44,
       parts: null,
     });
-    expect(setText).toHaveBeenLastCalledWith(
-      expect.stringContaining("Whisper/OpenAI→FAL, whisper-1->fal-ai/wizper"),
-    );
+    expect(setText).toHaveBeenLastCalledWith(expect.stringContaining("Whisper/OpenAI, whisper-1"));
+    expect(setText).toHaveBeenLastCalledWith(expect.not.stringContaining("FAL"));
     expect(setText).toHaveBeenLastCalledWith(expect.stringContaining("44s"));
 
     progress.onProgress({

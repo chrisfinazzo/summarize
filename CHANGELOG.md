@@ -5,6 +5,7 @@
 ### Fixes
 
 - Spotify podcasts: skip encrypted Spotify embed audio, fall back to publisher RSS enclosures, and surface podcast transcription failures instead of summarizing a bare URL.
+- CLI progress: show only the active transcription provider/model in status text instead of the full remote fallback chain.
 
 ## 0.13.0 - 2026-04-08
 

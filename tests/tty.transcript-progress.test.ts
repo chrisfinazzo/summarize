@@ -64,7 +64,8 @@ describe("tty transcript progress renderer", () => {
     });
 
     const first = setText.mock.calls.at(-1)?.[0] ?? "";
-    expect(first).toContain("Whisper/OpenAI→FAL, whisper-1->fal-ai/wizper");
+    expect(first).toContain("Whisper/OpenAI, whisper-1");
+    expect(first).not.toContain("FAL");
     expect(first).toContain("44s");
 
     vi.setSystemTime(12_000);
@@ -143,7 +144,7 @@ describe("tty transcript progress renderer", () => {
     vi.useRealTimers();
   });
 
-  it("renders AssemblyAI/Gemini chain labels generically", () => {
+  it("shows the active cloud transcriber instead of the fallback chain", () => {
     vi.useFakeTimers();
     vi.setSystemTime(5_000);
 
@@ -161,9 +162,9 @@ describe("tty transcript progress renderer", () => {
       parts: null,
     });
     const line = setText.mock.calls.at(-1)?.[0] ?? "";
-    expect(line).toContain(
-      "Whisper/Groq→AssemblyAI→Gemini→Whisper/OpenAI, groq/whisper-large-v3-turbo->assemblyai/universal-2->google/gemini-2.5-flash->whisper-1",
-    );
+    expect(line).toContain("Whisper/Groq, groq/whisper-large-v3-turbo");
+    expect(line).not.toContain("AssemblyAI");
+    expect(line).not.toContain("->");
 
     vi.useRealTimers();
   });
