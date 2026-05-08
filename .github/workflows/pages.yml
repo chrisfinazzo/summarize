@@ -3,6 +3,12 @@ name: Pages
 on:
   push:
     branches: [main]
+    paths:
+      - "docs/**"
+      - "scripts/build-docs-site.mjs"
+      - "scripts/docs-site-assets.mjs"
+      - "scripts/docs-site-markdown.mjs"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -17,25 +23,27 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Build docs site
+        run: node scripts/build-docs-site.mjs
+
       - name: Setup Pages
         uses: actions/configure-pages@v6
-
-      - name: Build with Jekyll
-        uses: actions/jekyll-build-pages@v1
-        with:
-          source: ./docs
-          destination: ./_site
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: ./_site
+          path: dist/docs-site
 
       - name: Deploy to GitHub Pages
         id: deployment

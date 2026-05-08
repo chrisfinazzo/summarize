@@ -224,7 +224,7 @@ pbpaste | summarize -
 
 ## Environment
 
-The provider keys and binary paths picked up at runtime are listed in [LLM overview](../llm.md#environment). `SUMMARIZE_MODEL` overrides the default model selection; `SUMMARIZE_THEME` picks the theme.
+The provider keys and binary paths picked up at runtime are listed in [LLM overview](../llm.md#env). `SUMMARIZE_MODEL` overrides the default model selection; `SUMMARIZE_THEME` picks the theme.
 
 ## See also
 

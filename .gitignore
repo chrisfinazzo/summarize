@@ -15,10 +15,5 @@ _pack
 apps/chrome-extension/test-results
 /slides/
 
-# Jekyll docs
-docs/.bundle
-docs/.jekyll-cache
-docs/.jekyll-metadata
-docs/_site
-_site
-Gemfile.lock
+# Built docs site (see scripts/build-docs-site.mjs)
+dist/docs-site

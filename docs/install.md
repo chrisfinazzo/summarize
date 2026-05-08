@@ -114,17 +114,15 @@ summarize --version
 summarize "https://en.wikipedia.org/wiki/Llama" --extract --format md | head
 ```
 
-## Local docs preview
+## Local Docs Preview
 
-The docs are a Jekyll site under `docs/`. Preview them locally with:
+Build and preview the static docs site from the repo root with:
 
 ```bash
-bundle exec jekyll serve -s docs --port 4000
-# or, from the repo root:
 ./scripts/docs-serve.sh
 ```
 
-The first run installs the Ruby gems listed in `docs/Gemfile` (you may need `bundle install` first).
+Use `PORT=4001 ./scripts/docs-serve.sh` to pick another port.
 
 ## Notes (Windows / containers)
 
