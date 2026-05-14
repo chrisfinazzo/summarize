@@ -13,17 +13,25 @@ describe("hover summary security boundaries", () => {
 
   it("rejects hover summaries for localhost and private literal hosts", () => {
     expect(isHoverSummarizeUrlAllowed("http://127.0.0.1:8080/admin")).toBe(false);
+    expect(isHoverSummarizeUrlAllowed("http://0.0.0.0:8787/health")).toBe(false);
     expect(isHoverSummarizeUrlAllowed("http://[::1]:8080/admin")).toBe(false);
+    expect(isHoverSummarizeUrlAllowed("http://[::]/metadata")).toBe(false);
+    expect(isHoverSummarizeUrlAllowed("http://[fe80::1]/metadata")).toBe(false);
+    expect(isHoverSummarizeUrlAllowed("http://[fd00::1]/metadata")).toBe(false);
     expect(isHoverSummarizeUrlAllowed("http://10.0.0.5/metadata")).toBe(false);
     expect(isHoverSummarizeUrlAllowed("http://172.16.0.10/internal")).toBe(false);
     expect(isHoverSummarizeUrlAllowed("http://192.168.1.20/router")).toBe(false);
     expect(isHoverSummarizeUrlAllowed("http://169.254.169.254/latest/meta-data/")).toBe(false);
     expect(isHoverSummarizeUrlAllowed("http://localhost:8787/health")).toBe(false);
+    expect(isHoverSummarizeUrlAllowed("http://panel.localhost/admin")).toBe(false);
+    expect(isHoverSummarizeUrlAllowed("http://printer.local/status")).toBe(false);
   });
 
   it("allows ordinary public http and https URLs", () => {
     expect(isHoverSummarizeUrlAllowed("https://example.com/article")).toBe(true);
     expect(isHoverSummarizeUrlAllowed("http://example.com/article")).toBe(true);
+    expect(isHoverSummarizeUrlAllowed("http://8.8.8.8/dns")).toBe(true);
+    expect(isHoverSummarizeUrlAllowed("http://172.32.0.1/public")).toBe(true);
   });
 
   it("rejects non-http hover summary URLs", () => {
