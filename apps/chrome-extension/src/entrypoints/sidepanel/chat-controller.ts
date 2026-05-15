@@ -5,6 +5,7 @@ import {
   computeChatContextUsage,
   hasUserChatMessage,
 } from "./chat-state";
+import { parseTimestampSeconds } from "./timestamp-links";
 import type { ChatMessage } from "./types";
 
 type RenderOptions = { prepend?: boolean; scroll?: boolean };
@@ -339,21 +340,4 @@ function buildAssistantMarkdown(
     .join("\n\n");
   if (!text.trim()) return calls;
   return `${text}\n\n---\n\n${calls}`;
-}
-
-function parseTimestampSeconds(value: string): number | null {
-  const parts = value.split(":").map((part) => part.trim());
-  if (parts.length < 2 || parts.length > 3) return null;
-  const secondsPart = parts.pop();
-  if (!secondsPart) return null;
-  const seconds = Number(secondsPart);
-  if (!Number.isFinite(seconds) || seconds < 0) return null;
-  const minutesPart = parts.pop();
-  if (minutesPart == null) return null;
-  const minutes = Number(minutesPart);
-  if (!Number.isFinite(minutes) || minutes < 0) return null;
-  const hoursPart = parts.pop();
-  const hours = hoursPart != null ? Number(hoursPart) : 0;
-  if (!Number.isFinite(hours) || hours < 0) return null;
-  return Math.floor(hours * 3600 + minutes * 60 + seconds);
 }

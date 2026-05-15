@@ -18,6 +18,10 @@ describe("transcript timestamp helpers", () => {
 
     expect(parseTimestampStringToMs("1:02")).toBe(62_000);
     expect(parseTimestampStringToMs("01:02:03")).toBe(3_723_000);
+    expect(parseTimestampStringToMs("1:02.500")).toBe(62_500);
+    expect(parseTimestampStringToMs("1:60")).toBeNull();
+    expect(parseTimestampStringToMs("1:02:60")).toBeNull();
+    expect(parseTimestampStringToMs("1:60:00")).toBeNull();
     expect(parseTimestampStringToMs("bad")).toBeNull();
 
     expect(parseTimestampToMs(1.5, true)).toBe(1500);

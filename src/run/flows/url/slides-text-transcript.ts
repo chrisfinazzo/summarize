@@ -28,14 +28,19 @@ const clampNumber = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value));
 
 function parseTimestampSeconds(value: string): number | null {
-  const parts = value.split(":").map((item) => Number(item));
+  const rawParts = value.split(":").map((item) => item.trim());
+  if (rawParts.length !== 2 && rawParts.length !== 3) return null;
+  if (rawParts.some((item) => !/^\d+$/.test(item))) return null;
+  const parts = rawParts.map((item) => Number(item));
   if (parts.some((item) => !Number.isFinite(item))) return null;
   if (parts.length === 2) {
     const [minutes, seconds] = parts;
+    if (seconds >= 60) return null;
     return minutes * 60 + seconds;
   }
   if (parts.length === 3) {
     const [hours, minutes, seconds] = parts;
+    if (minutes >= 60 || seconds >= 60) return null;
     return hours * 3600 + minutes * 60 + seconds;
   }
   return null;

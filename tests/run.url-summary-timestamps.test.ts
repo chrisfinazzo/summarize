@@ -69,6 +69,41 @@ describe("url summary timestamp sanitization", () => {
     );
   });
 
+  it("drops malformed key moment timestamps", () => {
+    const summary = [
+      "Intro paragraph.",
+      "",
+      "Key moments",
+      "[00:30] Valid setup",
+      "[1:99] Invalid seconds",
+      "- [1:60:00] Invalid minutes",
+      "plain context stays",
+    ].join("\n");
+
+    expect(
+      sanitizeSummaryKeyMoments({
+        markdown: summary,
+        maxSeconds: 7200,
+      }),
+    ).toBe(
+      ["Intro paragraph.", "", "Key moments", "[00:30] Valid setup", "plain context stays"].join(
+        "\n",
+      ),
+    );
+  });
+
+  it("ignores malformed timed transcript lines when adding fallback key moments", () => {
+    expect(
+      ensureSummaryKeyMoments({
+        markdown: "Summary first.",
+        extracted: {
+          transcriptTimedText: ["[0:01] Opening context", "[1:99] Invalid tail"].join("\n"),
+        },
+        maxSeconds: 7200,
+      }),
+    ).toBe(["Summary first.", "", "### Key moments", "- [0:01] Opening context"].join("\n"));
+  });
+
   it("removes the entire key moments section when every timestamp is impossible", () => {
     const summary = [
       "Summary first.",

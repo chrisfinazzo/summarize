@@ -9,14 +9,19 @@ const SMALL_OVERSHOOT_TOLERANCE_SECONDS = 5;
 const FALLBACK_KEY_MOMENT_COUNT = 3;
 
 function parseTimestampSeconds(value: string): number | null {
-  const parts = value.split(":").map((item) => Number(item));
+  const rawParts = value.split(":").map((item) => item.trim());
+  if (rawParts.length !== 2 && rawParts.length !== 3) return null;
+  if (rawParts.some((item) => !/^\d+$/.test(item))) return null;
+  const parts = rawParts.map((item) => Number(item));
   if (parts.some((item) => !Number.isFinite(item))) return null;
   if (parts.length === 2) {
     const [minutes, seconds] = parts;
+    if (seconds >= 60) return null;
     return minutes * 60 + seconds;
   }
   if (parts.length === 3) {
     const [hours, minutes, seconds] = parts;
+    if (minutes >= 60 || seconds >= 60) return null;
     return hours * 3600 + minutes * 60 + seconds;
   }
   return null;
@@ -76,6 +81,12 @@ function readLeadingKeyMomentSeconds(line: string): number | null {
   const match = line.match(KEY_MOMENT_LINE_RE);
   const raw = match?.[1] ?? match?.[2] ?? null;
   return raw ? parseTimestampSeconds(raw) : null;
+}
+
+function hasInvalidLeadingKeyMomentTimestamp(line: string): boolean {
+  const match = line.match(KEY_MOMENT_LINE_RE);
+  const raw = match?.[1] ?? match?.[2] ?? null;
+  return Boolean(raw && parseTimestampSeconds(raw) == null);
 }
 
 function clampLeadingKeyMomentTimestamp(line: string, maxSeconds: number): string {
@@ -207,6 +218,7 @@ export function sanitizeSummaryKeyMoments({
     const keptLines: string[] = [];
     let keptTimestampCount = 0;
     for (const sectionLine of lines.slice(index + 1, sectionEnd)) {
+      if (hasInvalidLeadingKeyMomentTimestamp(sectionLine)) continue;
       const seconds = readLeadingKeyMomentSeconds(sectionLine);
       if (seconds != null && seconds > maxSeconds) {
         if (seconds - maxSeconds <= SMALL_OVERSHOOT_TOLERANCE_SECONDS) {

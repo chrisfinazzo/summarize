@@ -93,6 +93,29 @@ describe("buildUrlPrompt with slides transcript timeline", () => {
     expect(prompt).not.toContain("Key moments");
   });
 
+  it("excludes malformed transcript timestamps from slide timeline excerpts", () => {
+    const prompt = buildUrlPrompt({
+      extracted: {
+        ...baseExtracted,
+        transcriptTimedText: [
+          "[0:05] valid intro",
+          "[0:60] invalid seconds",
+          "[1:60:00] invalid minutes",
+        ].join("\n"),
+      },
+      outputLanguage: { kind: "auto" },
+      lengthArg: { kind: "preset", preset: "short" },
+      promptOverride: null,
+      lengthInstruction: null,
+      languageInstruction: null,
+      slides,
+    });
+
+    expect(prompt).toContain("valid intro");
+    expect(prompt).not.toContain("invalid seconds");
+    expect(prompt).not.toContain("invalid minutes");
+  });
+
   it("keeps slide formatting instructions even without transcript timed text", () => {
     const prompt = buildUrlPrompt({
       extracted: baseExtracted,

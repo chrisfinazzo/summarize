@@ -86,6 +86,18 @@ describe("slides text helpers", () => {
     ).toBe(0);
   });
 
+  it("ignores malformed transcript timestamps for slide fallbacks", () => {
+    const segments = parseTranscriptTimedText("[00:05] Valid\n[00:60] Invalid\n[1:60:00] Bad");
+    expect(segments).toEqual([{ startSeconds: 5, text: "Valid" }]);
+
+    expect(
+      interleaveSlidesIntoTranscript({
+        transcriptTimedText: "[00:60] Invalid\n[00:05] Valid",
+        slides: [{ index: 1, timestamp: 10 }],
+      }),
+    ).toBe("[00:60] Invalid\n[00:05] Valid\n[slide:1]");
+  });
+
   it("coerces summaries without markers into slide blocks", () => {
     const markdown = [
       "### Intro",

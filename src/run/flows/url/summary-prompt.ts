@@ -24,10 +24,19 @@ const SLIDE_TRANSCRIPT_DEFAULT_EDGE_SECONDS = 30;
 const SLIDE_TRANSCRIPT_LEEWAY_SECONDS = 10;
 
 function parseTimestampSeconds(value: string): number | null {
-  const parts = value.split(":").map((item) => Number(item));
+  const rawParts = value.split(":").map((item) => item.trim());
+  if (rawParts.length !== 2 && rawParts.length !== 3) return null;
+  if (rawParts.some((item) => !/^\d+$/.test(item))) return null;
+  const parts = rawParts.map((item) => Number(item));
   if (parts.some((item) => !Number.isFinite(item))) return null;
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) {
+    if (parts[1] >= 60) return null;
+    return parts[0] * 60 + parts[1];
+  }
+  if (parts.length === 3) {
+    if (parts[1] >= 60 || parts[2] >= 60) return null;
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
   return null;
 }
 
