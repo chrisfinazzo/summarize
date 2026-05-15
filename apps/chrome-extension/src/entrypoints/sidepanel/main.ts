@@ -481,10 +481,10 @@ chatMessagesEl.addEventListener("click", (event) => {
   if (!link) return;
   const href = link.getAttribute("href") ?? "";
   if (!href.startsWith("timestamp:")) return;
-  const seconds = parseTimestampHref(href);
-  if (seconds == null) return;
   event.preventDefault();
   event.stopPropagation();
+  const seconds = parseTimestampHref(href);
+  if (seconds == null) return;
   void send({ type: "panel:seek", seconds });
 });
 
@@ -495,10 +495,10 @@ renderEl.addEventListener("click", (event) => {
   if (!link) return;
   const href = link.getAttribute("href") ?? "";
   if (!href.startsWith("timestamp:")) return;
-  const seconds = parseTimestampHref(href);
-  if (seconds == null) return;
   event.preventDefault();
   event.stopPropagation();
+  const seconds = parseTimestampHref(href);
+  if (seconds == null) return;
   void send({ type: "panel:seek", seconds });
 });
 

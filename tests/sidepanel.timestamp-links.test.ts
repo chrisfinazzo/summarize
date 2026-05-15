@@ -27,7 +27,12 @@ describe("sidepanel timestamp links", () => {
 
   it("rejects invalid timestamp hrefs", () => {
     expect(parseTimestampHref("timestamp:12")).toBe(12);
+    expect(parseTimestampHref("http://example.test/timestamp:12")).toBeNull();
+    expect(parseTimestampHref("timestamp:")).toBeNull();
     expect(parseTimestampHref("timestamp:12junk")).toBeNull();
+    expect(parseTimestampHref("timestamp:12.5")).toBeNull();
+    expect(parseTimestampHref("timestamp:1e3")).toBeNull();
+    expect(parseTimestampHref("timestamp:0x10")).toBeNull();
     expect(parseTimestampHref("timestamp:Infinity")).toBeNull();
   });
 });

@@ -28,8 +28,10 @@ export function parseTimestampSeconds(value: string): number | null {
 }
 
 export function parseTimestampHref(href: string): number | null {
+  if (!href.startsWith("timestamp:")) return null;
   const raw = href.slice("timestamp:".length).trim();
+  if (!/^\d+$/.test(raw)) return null;
   const seconds = Number(raw);
-  if (!Number.isFinite(seconds) || seconds < 0) return null;
-  return Math.floor(seconds);
+  if (!Number.isSafeInteger(seconds) || seconds < 0) return null;
+  return seconds;
 }
