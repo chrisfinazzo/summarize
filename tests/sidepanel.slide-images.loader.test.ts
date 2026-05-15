@@ -142,6 +142,44 @@ describe("slide image loader", () => {
     });
   });
 
+  it("clears the previous image before loading a changed slide URL", async () => {
+    globalThis.IntersectionObserver = undefined;
+    let responseBody = "first";
+    const fetchSpy = vi.fn(async () =>
+      createSlideFetchResponse({ ready: responseBody === "first" ? "1" : "0", body: responseBody }),
+    );
+    globalThis.fetch = fetchSpy;
+    const objectUrls = ["blob:first", "blob:second"];
+    mockCreateObjectUrl(() => objectUrls.shift() ?? "blob:next");
+
+    const loader = createSlideImageLoader({
+      loadSettings: async () => ({ token: "t", extendedLogging: false }) as Settings,
+    });
+    const wrapper = document.createElement("div");
+    wrapper.className = "slideStrip__thumb";
+    const img = document.createElement("img");
+    wrapper.appendChild(img);
+    document.body.appendChild(wrapper);
+
+    loader.observe(img, "http://127.0.0.1:8787/v1/slides/abc/1?v=1");
+    await waitUntil(() => {
+      expect(img.getAttribute("src")).toBe("blob:first");
+    });
+    img.dispatchEvent(new Event("load"));
+    expect(img.dataset.loaded).toBe("true");
+
+    responseBody = "second";
+    loader.observe(img, "http://127.0.0.1:8787/v1/slides/abc/1?v=2");
+
+    expect(img.getAttribute("src")).toBeNull();
+    expect(img.dataset.loaded).toBe("false");
+    expect(wrapper.classList.contains("isPlaceholder")).toBe(true);
+    await waitUntil(() => {
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(img.dataset.slideRetryCount).toBe("1");
+    });
+  });
+
   it("skips fetch when token is missing", async () => {
     globalThis.IntersectionObserver = undefined;
     const fetchSpy = vi.fn();

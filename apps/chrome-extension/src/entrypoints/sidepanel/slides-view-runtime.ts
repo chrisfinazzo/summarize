@@ -2,7 +2,11 @@ import type MarkdownIt from "markdown-it";
 import type { SseSlidesData } from "../../lib/runtime-contracts";
 import type { SlidesLayout } from "../../lib/settings";
 import { createSlideImageLoader, normalizeSlideImageUrl } from "./slide-images";
-import { resolveSlidesPayload, slidesPayloadChanged } from "./slides-payload";
+import {
+  normalizeSlidesPayload,
+  resolveSlidesPayload,
+  slidesPayloadChanged,
+} from "./slides-payload";
 import { createSlidesRenderer } from "./slides-renderer";
 import { formatSlideTimestamp } from "./slides-state";
 import { renderSummaryMarkdownDisplay } from "./summary-renderer";
@@ -263,18 +267,20 @@ export function createSlidesViewRuntime({
     setSlidesTranscriptTimedText: (value: string | null) => void,
   ) => {
     const state = getState();
+    const safePayload = normalizeSlidesPayload(data);
+    if (!safePayload) return;
     const isSameSource = Boolean(
-      state.panelState.slides && state.panelState.slides.sourceId === data.sourceId,
+      state.panelState.slides && state.panelState.slides.sourceId === safePayload.sourceId,
     );
     const activeSlidesRunId = resolveActiveSlidesRunId();
     const normalized: SseSlidesData = {
-      ...data,
-      slides: data.slides.map((slide) => ({
+      ...safePayload,
+      slides: safePayload.slides.map((slide) => ({
         ...slide,
-        imageUrl: normalizeSlideImageUrl(slide.imageUrl, data.sourceId, slide.index),
+        imageUrl: normalizeSlideImageUrl(slide.imageUrl, safePayload.sourceId, slide.index),
       })),
     };
-    const shouldReplaceSeeded = getSlidesSeededSourceId() === data.sourceId;
+    const shouldReplaceSeeded = getSlidesSeededSourceId() === safePayload.sourceId;
     const merged = resolveSlidesPayload(state.panelState.slides, normalized, {
       seededSourceId: getSlidesSeededSourceId(),
       activeSlidesRunId,

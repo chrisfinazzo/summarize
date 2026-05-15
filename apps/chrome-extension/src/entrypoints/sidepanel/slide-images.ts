@@ -258,6 +258,10 @@ export function createSlideImageLoader(
     }
     clearVisibilityTimer(img);
     const hadVisibleImage = img.dataset.loaded === "true" && Boolean(img.src);
+    if (!isSameUrl && hadVisibleImage) {
+      img.removeAttribute("src");
+      img.dataset.loaded = "false";
+    }
     img.dataset.slideImageUrl = imageUrl;
     if (!hadVisibleImage) {
       img.dataset.loaded = "false";

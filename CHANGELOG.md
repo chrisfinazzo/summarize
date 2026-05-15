@@ -9,6 +9,7 @@
 
 ### Fixes
 
+- Chrome extension slides: harden slide payload loading against malformed cache/stream data and clear stale thumbnails before retrying updated slide images.
 - Release gate: run `pnpm typecheck` during `pnpm check` so CI/release checks catch TypeScript errors.
 - Typecheck: include `packages/core` in the root typecheck script so core library errors fail the gate.
 - Tests: ignore invalid `VITEST_MAX_THREADS` overrides so Vitest never receives `maxThreads` below `minThreads`.

@@ -1,4 +1,5 @@
 import type { SseSlidesData } from "../../lib/runtime-contracts";
+import { normalizeSlidesPayload } from "./slides-payload";
 import {
   createSlidesStreamController,
   type SlidesStreamController,
@@ -59,10 +60,10 @@ export function createSlidesHydrator(options: SlidesHydratorOptions): SlidesHydr
 
   const handlePayload = (payload: SseSlidesData) => {
     if (!activeRunId) return;
-    if (payload.slides.length > 0) {
-      hasSlidesPayload = true;
-    }
-    onSlides(payload);
+    const normalized = normalizeSlidesPayload(payload);
+    if (!normalized) return;
+    hasSlidesPayload = true;
+    onSlides(normalized);
   };
 
   const hydrateSnapshot = async (_reason?: string) => {

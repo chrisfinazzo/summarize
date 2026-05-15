@@ -162,4 +162,53 @@ describe("sidepanel slides hydrator", () => {
     expect(snapshotCalls).toBe(1);
     expect(received).toEqual([payload]);
   });
+
+  it("hydrates snapshot when the stream only sends malformed slides", async () => {
+    const payload: SseSlidesData = {
+      sourceUrl: "https://example.com",
+      sourceId: "snapshot",
+      sourceKind: "youtube",
+      ocrAvailable: false,
+      slides: [
+        {
+          index: 1,
+          timestamp: 7,
+          imageUrl: "http://127.0.0.1:8787/v1/slides/snapshot/1",
+          ocrText: null,
+          ocrConfidence: null,
+        },
+      ],
+    };
+    const malformed = {
+      sourceUrl: "https://example.com",
+      sourceId: "snapshot",
+      sourceKind: "youtube",
+      ocrAvailable: false,
+      slides: [{ index: 0, timestamp: 0, imageUrl: "bad" }],
+    } as unknown as SseSlidesData;
+    let snapshotCalls = 0;
+    const received: SseSlidesData[] = [];
+    const hydrator = createSlidesHydrator({
+      getToken: async () => "token",
+      onSlides: (slides) => received.push(slides),
+      streamFetchImpl: async () =>
+        new Response(
+          streamFromEvents([
+            { event: "slides", data: malformed },
+            { event: "done", data: {} },
+          ]),
+          { status: 200 },
+        ),
+      snapshotFetchImpl: async () => {
+        snapshotCalls += 1;
+        return new Response(JSON.stringify({ ok: true, slides: payload }), { status: 200 });
+      },
+    });
+
+    await hydrator.start("run-malformed");
+    await waitFor(() => received.length === 1);
+
+    expect(snapshotCalls).toBe(1);
+    expect(received).toEqual([payload]);
+  });
 });
