@@ -1,7 +1,7 @@
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { encodeSseEvent } from "../shared/sse-events.js";
-import { resolveSlideImagePath, type SlideExtractionResult } from "../slides/index.js";
+import { resolveValidSlideImagePath, type SlideExtractionResult } from "../slides/index.js";
 import { json } from "./server-http.js";
 import type { Session } from "./server-session.js";
 import { attachBufferedSseSession } from "./server-sse.js";
@@ -88,7 +88,7 @@ export async function handleSessionRoutes(options: {
           const parsed = JSON.parse(raw) as SlideExtractionResult;
           const slide = parsed?.slides?.find?.((item) => item?.index === index);
           if (slide?.imagePath) {
-            const resolved = resolveSlideImagePath(slidesDir, slide.imagePath);
+            const resolved = await resolveValidSlideImagePath(slidesDir, slide.imagePath);
             if (resolved) return resolved;
           }
         } catch {
@@ -104,10 +104,12 @@ export async function handleSessionRoutes(options: {
       if (candidates.length === 0) return null;
       let best: { filePath: string; mtimeMs: number } | null = null;
       for (const filePath of candidates) {
-        const stat = await fs.stat(filePath).catch(() => null);
+        const resolved = await resolveValidSlideImagePath(slidesDir, path.basename(filePath));
+        if (!resolved) continue;
+        const stat = await fs.stat(resolved).catch(() => null);
         if (!stat?.isFile()) continue;
         const mtimeMs = stat.mtimeMs;
-        if (!best || mtimeMs > best.mtimeMs) best = { filePath, mtimeMs };
+        if (!best || mtimeMs > best.mtimeMs) best = { filePath: resolved, mtimeMs };
       }
       return best?.filePath ?? null;
     };

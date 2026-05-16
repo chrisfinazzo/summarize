@@ -11,6 +11,7 @@ export {
   readSlidesCacheIfValid,
   resolveSlideImagePath,
   resolveSlidesDir,
+  resolveValidSlideImagePath,
   serializeSlideImagePath,
   validateSlidesCache,
 } from "./store.js";

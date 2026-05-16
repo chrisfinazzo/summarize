@@ -16,7 +16,7 @@ export function buildSlidesDirId(slidesDir: string): string {
 
 const isPathUnderRoot = (root: string, candidate: string): boolean => {
   const rel = path.relative(root, candidate);
-  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
 };
 
 export function resolveSlideImagePath(slidesDir: string, imagePath: string): string | null {
@@ -33,10 +33,30 @@ export function serializeSlideImagePath(slidesDir: string, imagePath: string): s
   const normalizedSlidesDir = normalizePath(slidesDir);
   const normalizedResolved = normalizePath(resolved);
   const rel = path.relative(normalizedSlidesDir, normalizedResolved);
-  if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+  if (isPathUnderRoot(normalizedSlidesDir, normalizedResolved)) {
     return rel;
   }
   return imagePath;
+}
+
+export async function resolveValidSlideImagePath(
+  slidesDir: string,
+  imagePath: string,
+): Promise<string | null> {
+  const resolved = resolveSlideImagePath(slidesDir, imagePath);
+  if (!resolved) return null;
+  try {
+    const realSlidesDir = await fs.realpath(normalizePath(slidesDir));
+    const linkStat = await fs.lstat(resolved);
+    if (linkStat.isSymbolicLink()) return null;
+    const stat = await fs.stat(resolved);
+    if (!stat.isFile()) return null;
+    const realResolved = await fs.realpath(resolved);
+    if (!isPathUnderRoot(realSlidesDir, realResolved)) return null;
+    return resolved;
+  } catch {
+    return null;
+  }
 }
 
 export async function validateSlidesCache({
@@ -70,19 +90,21 @@ export async function validateSlidesCache({
   if (!Array.isArray(cached.slides) || cached.slides.length === 0) return null;
 
   const slides = [];
+  let realExpectedDir: string;
   try {
+    const realOutputDir = await fs.realpath(normalizedOutputDir);
     const dirStat = await fs.stat(normalizedExpectedDir);
     if (!dirStat?.isDirectory()) return null;
+    realExpectedDir = await fs.realpath(normalizedExpectedDir);
+    if (!isPathUnderRoot(realOutputDir, realExpectedDir)) return null;
   } catch {
     return null;
   }
 
   for (const slide of cached.slides) {
     if (!slide?.imagePath) return null;
-    const resolved = resolveSlideImagePath(normalizedExpectedDir, slide.imagePath);
+    const resolved = await resolveValidSlideImagePath(normalizedExpectedDir, slide.imagePath);
     if (!resolved) return null;
-    const stat = await fs.stat(resolved).catch(() => null);
-    if (!stat?.isFile()) return null;
     slides.push({ ...slide, imagePath: resolved });
   }
 
@@ -102,6 +124,9 @@ export async function readSlidesCacheIfValid({
   settings: SlideSettings;
 }): Promise<SlideExtractionResult | null> {
   const slidesDir = resolveSlidesDir(settings.outputDir, source.sourceId);
+  const normalizedOutputDir = normalizePath(settings.outputDir);
+  const normalizedSlidesDir = normalizePath(slidesDir);
+  if (!isPathUnderRoot(normalizedOutputDir, normalizedSlidesDir)) return null;
   const payloadPath = path.join(slidesDir, "slides.json");
   let raw: string;
   try {
