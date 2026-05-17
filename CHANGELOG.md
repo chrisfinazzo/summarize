@@ -15,6 +15,7 @@
 - Chrome extension options: show save failures instead of leaving the form stuck on Saving.
 - YouTube transcripts: try same-language caption fallbacks when the preferred caption URL is blocked or dead.
 - Chrome extension: match CLI slide defaults for YouTube slide summaries and replace transcript fallback card text with LLM-written slide summaries.
+- Chrome extension options: defer loading automation skills until the Skills tab opens so settings startup avoids the large skills bundle.
 - Chrome extension: make picker popovers opaque again and reorganize advanced options into clearer groups.
 - Chrome extension options: avoid crashing when Chrome opens settings without the extension storage API available.
 
