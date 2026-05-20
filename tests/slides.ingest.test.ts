@@ -131,6 +131,34 @@ describe("slides ingest", () => {
     ).rejects.toThrow(/guarded download rejected/);
   });
 
+  it("does not return a YouTube stream fallback when remote fallback is disabled", async () => {
+    const downloadYoutubeVideo = vi.fn(async () => {
+      throw new Error("guarded youtube download rejected");
+    });
+    const resolveYoutubeStreamUrl = vi.fn(async () => "https://stream.example/video.m3u8");
+
+    await expect(
+      prepareSlidesInput({
+        source: { kind: "youtube", url: "https://youtube.com/watch?v=abc", sourceId: "yt:abc" },
+        mediaCache: null,
+        timeoutMs: 1000,
+        ytDlpPath: "/usr/bin/yt-dlp",
+        allowRemoteUrlFallback: false,
+        ytDlpCookiesFromBrowser: null,
+        resolveSlidesYtDlpExtractFormat: () => "best",
+        resolveSlidesStreamFallback: () => true,
+        buildSlidesMediaCacheKey: (url) => `${url}#slides`,
+        formatBytes: (bytes) => `${bytes}B`,
+        reportSlidesProgress: vi.fn(),
+        logSlidesTiming: vi.fn(),
+        downloadYoutubeVideo,
+        downloadRemoteVideo: vi.fn(),
+        resolveYoutubeStreamUrl,
+      }),
+    ).rejects.toThrow(/guarded youtube download rejected/);
+    expect(resolveYoutubeStreamUrl).not.toHaveBeenCalled();
+  });
+
   it("uses local file URLs directly without downloading", async () => {
     const filePath = path.join(tmpdir(), `summarize-slides-local-${Date.now().toString()}.webm`);
     await fs.writeFile(filePath, "video");

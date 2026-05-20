@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -63,6 +63,11 @@ afterEach(() => {
 describe("runUrlFlow slides done hook", () => {
   it("emits ok when slides finish", async () => {
     const root = mkdtempSync(join(tmpdir(), "summarize-slides-done-"));
+    const binDir = join(root, "bin");
+    mkdirSync(binDir);
+    const ytDlpPath = join(binDir, "yt-dlp");
+    writeFileSync(ytDlpPath, "#!/bin/sh\nexit 0\n");
+    chmodSync(ytDlpPath, 0o755);
     const url = "https://www.youtube.com/watch?v=abc123def45";
     const content =
       "<!doctype html><html><head><title>Video</title></head><body>Test</body></html>";
@@ -102,7 +107,7 @@ describe("runUrlFlow slides done hook", () => {
     };
 
     const ctx = createDaemonUrlFlowContext({
-      env: { HOME: root, OPENAI_API_KEY: "test" },
+      env: { HOME: root, OPENAI_API_KEY: "test", PATH: binDir },
       fetchImpl,
       urlFetchImpl: fetchImpl,
       cache,
@@ -130,7 +135,7 @@ describe("runUrlFlow slides done hook", () => {
     expect(doneResult?.ok).toBe(true);
     const call = extractSlidesForSource.mock.calls[0]?.[0];
     expect(call?.mediaCache).toBe(mediaCache);
-    expect(call?.ytDlpPath).toBeNull();
+    expect(call?.ytDlpPath).toBe(ytDlpPath);
     expect(call?.disableYtDlpAutoResolve).toBe(true);
     expect(call?.allowRemoteUrlFallback).toBe(false);
   });

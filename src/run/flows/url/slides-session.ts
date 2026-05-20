@@ -170,6 +170,7 @@ export function createUrlSlidesSession({
         ytDlpPath: resolveUrlFlowYtDlpPath({
           urlFetch: io.urlFetch,
           ytDlpPath: model.apiStatus.ytDlpPath,
+          allowGuardedExternalDownloader: source.kind === "youtube",
         }),
         disableYtDlpAutoResolve: Boolean(io.urlFetch),
         allowRemoteUrlFallback: !io.urlFetch,

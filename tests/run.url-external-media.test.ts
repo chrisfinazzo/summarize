@@ -16,4 +16,16 @@ describe("URL flow external media downloader policy", () => {
       }),
     ).toBeNull();
   });
+
+  it("allows yt-dlp for bounded downloader targets after guarded URL resolution", () => {
+    const guardedFetch = vi.fn() as unknown as typeof fetch;
+
+    expect(
+      resolveUrlFlowYtDlpPath({
+        urlFetch: guardedFetch,
+        ytDlpPath: "/usr/bin/yt-dlp",
+        allowGuardedExternalDownloader: true,
+      }),
+    ).toBe("/usr/bin/yt-dlp");
+  });
 });

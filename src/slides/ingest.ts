@@ -146,7 +146,7 @@ export async function prepareSlidesInput({
         warnings,
       };
     } catch (error) {
-      if (!allowStreamFallback) throw error;
+      if (!allowStreamFallback || !allowRemoteUrlFallback) throw error;
       warnings.push(`Failed to download video; falling back to stream URL: ${String(error)}`);
       reportSlidesProgress?.("fetching video", 6);
       const streamStartedAt = Date.now();
