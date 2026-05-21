@@ -10,7 +10,9 @@ function createHarness() {
     windowId: 1,
     runController: null,
     inflightUrl: null,
+    inflightRequest: null,
     lastSummarizedUrl: null,
+    activeSummaryRun: null,
     daemonRecovery: { recordFailure: vi.fn() },
     daemonStatus: { markReady: vi.fn() },
   };
@@ -100,11 +102,13 @@ describe("chrome panel summarize", () => {
         },
       },
     ]);
+    expect(harness.session.lastSummarizedUrl).toBeNull();
   });
 
   it("dedupes automatic starts for the current inflight URL", async () => {
     const harness = createHarness();
     harness.session.inflightUrl = youtubeUrl;
+    harness.session.inflightRequest = { url: youtubeUrl, inputMode: "video", slides: true };
 
     await harness.summarize();
 
@@ -112,11 +116,49 @@ describe("chrome panel summarize", () => {
     expect(harness.sent).toEqual([]);
   });
 
+  it("does not dedupe when slides settings change for the same URL", async () => {
+    const harness = createHarness();
+    let slidesEnabled = false;
+
+    await harness.summarize({
+      reason: "manual",
+      loadSettings: vi.fn(async () => ({
+        ...defaultSettings,
+        token: "token",
+        autoSummarize: true,
+        slidesEnabled,
+        slidesParallel: true,
+        summaryTimestamps: true,
+      })),
+    });
+    slidesEnabled = true;
+    await harness.summarize({
+      reason: "manual",
+      loadSettings: vi.fn(async () => ({
+        ...defaultSettings,
+        token: "token",
+        autoSummarize: true,
+        slidesEnabled,
+        slidesParallel: true,
+        summaryTimestamps: true,
+      })),
+    });
+
+    expect(harness.fetchImpl).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse(String(harness.fetchImpl.mock.calls[0]?.[1]?.body ?? "{}")) as
+      | Record<string, unknown>
+      | undefined;
+    const secondBody = JSON.parse(String(harness.fetchImpl.mock.calls[1]?.[1]?.body ?? "{}")) as
+      | Record<string, unknown>
+      | undefined;
+    expect(firstBody?.slides).not.toBe(true);
+    expect(secondBody?.slides).toBe(true);
+  });
+
   it("keeps non-YouTube URL-preferred pages out of the video transcript path", async () => {
     const harness = createHarness();
     const url = "https://x.com/example/status/1234567890123456789";
-
-    await harness.summarize({
+    const overrides = {
       getActiveTab: vi.fn(async () => ({
         id: 7,
         windowId: 1,
@@ -134,7 +176,10 @@ describe("chrome panel summarize", () => {
           media: null,
         },
       })),
-    });
+    };
+
+    await harness.summarize(overrides);
+    await harness.summarize(overrides);
 
     expect(harness.fetchImpl).toHaveBeenCalledOnce();
     const [, init] = harness.fetchImpl.mock.calls[0];

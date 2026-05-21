@@ -204,6 +204,69 @@ test("sidepanel video selection requests slides when enabled", async ({
   }
 });
 
+test("sidepanel coalesces duplicate YouTube slide summarize requests", async ({
+  browserName: _browserName,
+}, testInfo) => {
+  const harness = await launchExtension(getBrowserFromProject(testInfo.project.name));
+
+  try {
+    await mockDaemonSummarize(harness);
+    await seedSettings(harness, {
+      token: "test-token",
+      autoSummarize: false,
+      slidesEnabled: true,
+    });
+    const youtubeUrl = "https://www.youtube.com/watch?v=coalesce123";
+    const contentPage = await harness.context.newPage();
+    await contentPage.route("https://www.youtube.com/**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/html" },
+        body: "<html><body><article>Video placeholder</article></body></html>",
+      });
+    });
+    await contentPage.goto(youtubeUrl, { waitUntil: "domcontentloaded" });
+    await maybeBringToFront(contentPage);
+    await activateTabByUrl(harness, youtubeUrl);
+    await waitForActiveTabUrl(harness, youtubeUrl);
+    await injectContentScript(harness, "content-scripts/extract.js", youtubeUrl);
+
+    const page = await openExtensionPage(harness, "sidepanel.html", "#title");
+    await waitForPanelPort(page);
+    await page.route("http://127.0.0.1:8787/v1/summarize/**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+        body: ["event: done", "data: {}", ""].join("\n"),
+      });
+    });
+    await sendBgMessage(harness, {
+      type: "ui:state",
+      state: buildUiState({
+        tab: { id: 1, url: youtubeUrl, title: "Example" },
+        media: { hasVideo: true, hasAudio: true, hasCaptions: true },
+        settings: { slidesEnabled: true },
+        status: "",
+      }),
+    });
+
+    await sendPanelMessage(page, { type: "panel:summarize", inputMode: "video", refresh: false });
+    await sendPanelMessage(page, { type: "panel:summarize", inputMode: "video", refresh: false });
+
+    await expect
+      .poll(async () => {
+        const bodies = (await getSummarizeBodies(harness)) as Array<Record<string, unknown>>;
+        return bodies.filter((body) => body?.mode === "url" && body?.slides === true).length;
+      })
+      .toBe(1);
+    const bodies = (await getSummarizeBodies(harness)) as Array<Record<string, unknown>>;
+    expect(bodies.filter((body) => body?.mode === "url" && body?.slides === true)).toHaveLength(1);
+    assertNoErrors(harness);
+  } finally {
+    await closeExtension(harness.context, harness.userDataDir);
+  }
+});
+
 test("sidepanel video selection does not request slides when disabled", async ({
   browserName: _browserName,
 }, testInfo) => {

@@ -64,6 +64,16 @@ function buildPanelState(): PanelState {
   };
 }
 
+function addSlides(panelState: PanelState): void {
+  panelState.slides = {
+    sourceUrl: panelState.currentSource?.url ?? "https://example.com/video",
+    sourceId: "slides-1",
+    sourceKind: "youtube",
+    ocrAvailable: true,
+    slides: [{ index: 1, timestamp: 0, imageUrl: "", ocrText: "" }],
+  };
+}
+
 describe("slides summary controller", () => {
   beforeEach(() => {
     streamOptions = null;
@@ -75,6 +85,7 @@ describe("slides summary controller", () => {
 
   it("defers markdown while slides are disabled and applies it later", () => {
     const panelState = buildPanelState();
+    addSlides(panelState);
     let slidesEnabled = false;
     const updateSlideSummaryFromMarkdown = vi.fn();
     const renderMarkdown = vi.fn();
@@ -98,22 +109,23 @@ describe("slides summary controller", () => {
       renderInlineSlidesFallback: vi.fn(),
     });
 
-    controller.applyMarkdown("Slide summary");
+    controller.applyMarkdown("[slide:1]\nSlide summary.");
     expect(updateSlideSummaryFromMarkdown).not.toHaveBeenCalled();
 
     slidesEnabled = true;
     controller.maybeApplyPending();
 
-    expect(updateSlideSummaryFromMarkdown).toHaveBeenCalledWith("Slide summary", {
+    expect(updateSlideSummaryFromMarkdown).toHaveBeenCalledWith("[slide:1]\nSlide summary.", {
       preserveIfEmpty: false,
       source: "slides",
     });
-    expect(renderMarkdown).toHaveBeenCalledWith("Slide summary");
+    expect(renderMarkdown).toHaveBeenCalledWith("[slide:1]\nSlide summary.");
     expect(clearSummarySource).not.toHaveBeenCalled();
   });
 
   it("defers markdown while the panel is in page mode", () => {
     const panelState = buildPanelState();
+    addSlides(panelState);
     const updateSlideSummaryFromMarkdown = vi.fn();
     const renderMarkdown = vi.fn();
     let inputModeOverride: "page" | "video" | null = "page";
@@ -148,6 +160,7 @@ describe("slides summary controller", () => {
 
   it("does not render markdown when a primary summary already exists", () => {
     const panelState = buildPanelState();
+    addSlides(panelState);
     panelState.summaryMarkdown = "Primary summary";
     const updateSlideSummaryFromMarkdown = vi.fn();
     const renderMarkdown = vi.fn();
@@ -170,7 +183,7 @@ describe("slides summary controller", () => {
       renderInlineSlidesFallback: vi.fn(),
     });
 
-    controller.applyMarkdown("Slides-only summary");
+    controller.applyMarkdown("[slide:1]\nSlides-only summary.");
 
     expect(updateSlideSummaryFromMarkdown).toHaveBeenCalledOnce();
     expect(renderMarkdown).not.toHaveBeenCalled();
@@ -297,6 +310,7 @@ describe("slides summary controller", () => {
 
   it("ignores stale callbacks after switching to a newer slides summary run", async () => {
     const panelState = buildPanelState();
+    addSlides(panelState);
     const updateSlideSummaryFromMarkdown = vi.fn();
     const renderMarkdown = vi.fn();
 
@@ -328,25 +342,31 @@ describe("slides summary controller", () => {
     expect(bravoStream).toBeTruthy();
     expect(bravoStream).not.toBe(alphaStream);
 
-    alphaStream?.onRender?.("Alpha stale summary");
+    alphaStream?.onRender?.("[slide:1]\nAlpha stale summary.");
     alphaStream?.onDone?.();
-    expect(updateSlideSummaryFromMarkdown).not.toHaveBeenCalledWith("Alpha stale summary", {
-      preserveIfEmpty: true,
-      source: "slides",
-    });
+    expect(updateSlideSummaryFromMarkdown).not.toHaveBeenCalledWith(
+      "[slide:1]\nAlpha stale summary.",
+      {
+        preserveIfEmpty: true,
+        source: "slides",
+      },
+    );
 
-    bravoStream?.onRender?.("Bravo fresh summary");
+    bravoStream?.onRender?.("[slide:1]\nBravo fresh summary.");
     bravoStream?.onDone?.();
 
-    expect(updateSlideSummaryFromMarkdown).toHaveBeenCalledWith("Bravo fresh summary", {
+    expect(updateSlideSummaryFromMarkdown).toHaveBeenCalledWith("[slide:1]\nBravo fresh summary.", {
       preserveIfEmpty: true,
       source: "slides",
     });
-    expect(updateSlideSummaryFromMarkdown).toHaveBeenLastCalledWith("Bravo fresh summary", {
-      preserveIfEmpty: false,
-      source: "slides",
-    });
-    expect(controller.getMarkdown()).toBe("Bravo fresh summary");
+    expect(updateSlideSummaryFromMarkdown).toHaveBeenLastCalledWith(
+      "[slide:1]\nBravo fresh summary.",
+      {
+        preserveIfEmpty: false,
+        source: "slides",
+      },
+    );
+    expect(controller.getMarkdown()).toBe("[slide:1]\nBravo fresh summary.");
     expect(controller.getComplete()).toBe(true);
   });
 

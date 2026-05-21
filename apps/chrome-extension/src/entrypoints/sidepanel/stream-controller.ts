@@ -99,6 +99,17 @@ export function createStreamController(options: StreamControllerOptions): Stream
     renderQueued = 0;
   };
 
+  const flushQueuedRender = () => {
+    if (!renderQueued) return;
+    window.clearTimeout(renderQueued);
+    renderQueued = 0;
+    if (mode === "chat") {
+      onChunk?.(chatContent);
+      return;
+    }
+    onRender?.(markdown);
+  };
+
   const abort = () => {
     activeGeneration += 1;
     if (!controller) return;
@@ -235,6 +246,7 @@ export function createStreamController(options: StreamControllerOptions): Stream
       }
 
       onStatus("");
+      flushQueuedRender();
       onDone?.();
     } catch (err) {
       if (err instanceof Error && err.name === "IdleTimeoutError") {

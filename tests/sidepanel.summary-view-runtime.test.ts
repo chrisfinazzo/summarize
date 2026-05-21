@@ -114,10 +114,11 @@ describe("summary view runtime", () => {
     });
   });
 
-  it("requests transcript context when cached slides lack timed transcript text", () => {
+  it("does not request transcript context when cached slides lack timed transcript text", () => {
     const panelState = createPanelState();
     const setSlidesContextUrl = vi.fn();
     const requestSlidesContext = vi.fn();
+    const youtubeUrl = "https://www.youtube.com/watch?v=abc123";
     const runtime = createSummaryViewRuntime({
       panelState,
       renderEl: document.createElement("div"),
@@ -140,7 +141,7 @@ describe("summary view runtime", () => {
       getSlidesParallelValue: vi.fn(() => true),
       getCurrentRunTabId: vi.fn(() => null),
       getActiveTabId: vi.fn(() => 1),
-      getActiveTabUrl: vi.fn(() => "https://example.com/watch?v=abc123"),
+      getActiveTabUrl: vi.fn(() => youtubeUrl),
       setCurrentRunTabId: vi.fn(),
       setSlidesContextPending: vi.fn(),
       setSlidesContextUrl,
@@ -168,8 +169,9 @@ describe("summary view runtime", () => {
 
     runtime.applyPanelCache(
       createCachePayload({
+        url: youtubeUrl,
         slides: {
-          sourceUrl: "https://example.com/watch?v=abc123",
+          sourceUrl: youtubeUrl,
           sourceId: "youtube-abc123",
           sourceKind: "youtube",
           ocrAvailable: true,
@@ -185,7 +187,7 @@ describe("summary view runtime", () => {
     );
 
     expect(setSlidesContextUrl).toHaveBeenCalledWith(null);
-    expect(requestSlidesContext).toHaveBeenCalledTimes(1);
+    expect(requestSlidesContext).not.toHaveBeenCalled();
   });
 
   it("hides the persistent header copy action when resetting the summary view", () => {

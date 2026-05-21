@@ -5,6 +5,24 @@ export type PanelSession<Recovery, Status> = {
   panelLastPingAt: number;
   lastSummarizedUrl: string | null;
   inflightUrl: string | null;
+  inflightRequest: {
+    url: string;
+    inputMode: "page" | "video" | null;
+    slides: boolean;
+  } | null;
+  activeSummaryRun: {
+    run: {
+      id: string;
+      url: string;
+      title: string | null;
+      model: string;
+      reason: string;
+      slides?: boolean;
+    };
+    startedAt: number;
+    inputMode: "page" | "video" | null;
+    slides: boolean;
+  } | null;
   runController: AbortController | null;
   agentController: AbortController | null;
   lastNavAt: number;
@@ -64,6 +82,8 @@ export function createPanelSessionStore<
         panelLastPingAt: 0,
         lastSummarizedUrl: null,
         inflightUrl: null,
+        inflightRequest: null,
+        activeSummaryRun: null,
         runController: null,
         agentController: null,
         lastNavAt: 0,

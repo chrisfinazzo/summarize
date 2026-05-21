@@ -1532,7 +1532,6 @@ function seedPlannedSlidesForRun(run: RunStart) {
   };
   slidesState.slidesSeededSourceId = sourceId;
   updateSlidesTextState();
-  void requestSlidesContext();
   queueSlidesRender();
   panelCacheController.scheduleSync(0);
   return true;

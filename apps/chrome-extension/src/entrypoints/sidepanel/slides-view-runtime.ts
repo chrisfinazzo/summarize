@@ -1,3 +1,4 @@
+import { shouldPreferUrlMode } from "@steipete/summarize-core/content/url";
 import type MarkdownIt from "markdown-it";
 import type { SseSlidesData } from "../../lib/runtime-contracts";
 import type { SlidesLayout } from "../../lib/settings";
@@ -307,7 +308,10 @@ export function createSlidesViewRuntime({
       setSlidesContextPending(false);
       setSlidesContextUrl(null);
       setSlidesTranscriptTimedText(null);
-      if (!normalized.transcriptTimedText) {
+    }
+    if (!normalized.transcriptTimedText) {
+      const sourceUrl = normalized.sourceUrl || state.currentSourceUrl || "";
+      if (sourceUrl && !shouldPreferUrlMode(sourceUrl)) {
         void requestSlidesContext();
       }
     }

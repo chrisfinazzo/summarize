@@ -6,6 +6,7 @@ export function createBackgroundPanelRuntime<
   Session extends {
     windowId: number;
     port: chrome.runtime.Port;
+    activeSummaryRun: Parameters<typeof runPanelSummarize>[0]["session"]["activeSummaryRun"];
     daemonRecovery: { clearPending: () => void };
   },
 >(options: {

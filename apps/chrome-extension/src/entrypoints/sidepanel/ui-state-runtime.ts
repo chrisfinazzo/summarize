@@ -293,6 +293,7 @@ export function createUiStateRuntime(opts: UiStateRuntimeOpts) {
     if (
       opts.getChatEnabledValue() &&
       opts.getActiveTabId() &&
+      !shouldPreferUrlMode(nextTabUrl ?? "") &&
       opts.chatController.getMessages().length === 0
     ) {
       void opts.restoreChatHistory();

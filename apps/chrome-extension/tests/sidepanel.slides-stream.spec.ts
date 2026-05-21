@@ -14,6 +14,7 @@ import {
 import { allowFirefoxExtensionTests } from "./helpers/extension-test-config";
 import {
   getPanelSlideDescriptions,
+  getPanelSlideTitleEntries,
   getPanelSlidesTimeline,
   getPanelSummaryMarkdown,
   waitForApplySlidesHook,
@@ -397,6 +398,117 @@ test("sidepanel replaces transcript slide copy with slides LLM summaries", async
     const descriptions = await getPanelSlideDescriptions(page);
     expect(descriptions).toHaveLength(2);
     expect(descriptions.every(([, text]) => !text.includes("Raw transcript fallback"))).toBe(true);
+
+    assertNoErrors(harness);
+  } finally {
+    await closeExtension(harness.context, harness.userDataDir);
+  }
+});
+
+test("sidepanel streams split slide summary chunks into gallery cards", async ({
+  browserName: _browserName,
+}, testInfo) => {
+  const harness = await launchExtension(getBrowserFromProject(testInfo.project.name));
+
+  try {
+    await seedSettings(harness, {
+      token: "test-token",
+      autoSummarize: false,
+      slidesEnabled: true,
+      slidesParallel: true,
+      slidesOcrEnabled: true,
+    });
+    const page = await openExtensionPage(harness, "sidepanel.html", "#title");
+    await waitForPanelPort(page);
+    await waitForSettingsHydratedHook(page);
+
+    const sourceUrl = "https://www.youtube.com/watch?v=chunkedSlides123";
+    const slidesPayload = buildSlidesPayload({
+      sourceUrl,
+      sourceId: "youtube-chunkedSlides123",
+      count: 2,
+      textPrefix: "Raw transcript fallback",
+    });
+    await page.route(
+      "http://127.0.0.1:8787/v1/summarize/chunked-slides/slides/events",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+          body: [
+            "event: slides",
+            `data: ${JSON.stringify(slidesPayload)}`,
+            "",
+            "event: done",
+            "data: {}",
+            "",
+          ].join("\n"),
+        });
+      },
+    );
+    await page.route("http://127.0.0.1:8787/v1/summarize/chunked-slides/events", async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+        body: [
+          "event: chunk",
+          `data: ${JSON.stringify({ text: "Intro paragraph.\n\n[slide:1]\n## First shared title\n" })}`,
+          "",
+          "event: chunk",
+          `data: ${JSON.stringify({ text: "First shared card body arrives after the marker.\n\n[slide:2]\n## Second shared title\nSecond shared card body streams too." })}`,
+          "",
+          "event: done",
+          "data: {}",
+          "",
+        ].join("\n"),
+      });
+    });
+    const placeholderPng = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO3kq0cAAAAASUVORK5CYII=",
+      "base64",
+    );
+    await page.route("http://127.0.0.1:8787/v1/slides/**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "image/png",
+          "x-summarize-slide-ready": "1",
+        },
+        body: placeholderPng,
+      });
+    });
+
+    await sendBgMessage(harness, {
+      type: "ui:state",
+      state: buildUiState({
+        tab: { id: 1, url: sourceUrl, title: "Chunked Slides" },
+        media: { hasVideo: true, hasAudio: true, hasCaptions: true },
+        settings: {
+          autoSummarize: false,
+          slidesEnabled: true,
+          slidesParallel: true,
+          slidesOcrEnabled: true,
+          tokenPresent: true,
+        },
+      }),
+    });
+    await sendBgMessage(harness, {
+      type: "slides:run",
+      ok: true,
+      runId: "chunked-slides",
+      url: sourceUrl,
+    });
+
+    await expect.poll(async () => (await getPanelSlidesTimeline(page)).length).toBe(2);
+    await expect
+      .poll(
+        async () => (await getPanelSlideDescriptions(page)).map(([, text]) => text).join("\n"),
+        { timeout: 10_000 },
+      )
+      .toContain("First shared card body arrives");
+    const titles = await getPanelSlideTitleEntries(page);
+    expect(titles).toContainEqual([1, "First shared title"]);
+    expect(titles).toContainEqual([2, "Second shared title"]);
 
     assertNoErrors(harness);
   } finally {

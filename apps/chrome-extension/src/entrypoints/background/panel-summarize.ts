@@ -18,6 +18,17 @@ type BackgroundSummarizeSession = {
   runController: AbortController | null;
   inflightUrl: string | null;
   lastSummarizedUrl: string | null;
+  inflightRequest: {
+    url: string;
+    inputMode: "page" | "video" | null;
+    slides: boolean;
+  } | null;
+  activeSummaryRun: {
+    run: RunStart;
+    startedAt: number;
+    inputMode: "page" | "video" | null;
+    slides: boolean;
+  } | null;
   daemonRecovery: DaemonRecoveryLike;
   daemonStatus: DaemonStatusLike;
 };
@@ -99,11 +110,48 @@ export async function summarizeActiveTab({
   const tab = await getActiveTab(session.windowId);
   if (!tab?.id || !canSummarizeUrl(tab.url)) return;
   const tabUrl = tab.url ?? "";
+  const prefersUrlModeForTab = shouldPreferUrlMode(tabUrl);
+  const requestedInputMode =
+    opts?.inputMode ?? (prefersUrlModeForTab || isYouTubeVideoUrl(tabUrl) ? "video" : null);
+  const requestedWantsSlides =
+    settings.slidesEnabled && (requestedInputMode === "video" || prefersUrlModeForTab);
+  const matchesRequestedRun = (candidate: {
+    url: string;
+    inputMode: "page" | "video" | null;
+    slides: boolean;
+  }) =>
+    urlsMatch(candidate.url, tabUrl) &&
+    candidate.inputMode === requestedInputMode &&
+    candidate.slides === requestedWantsSlides;
+  const canCoalesceSameUrl = !opts?.refresh && reason !== "length-change";
+  const activeRun = session.activeSummaryRun;
+  if (
+    canCoalesceSameUrl &&
+    activeRun &&
+    Date.now() - activeRun.startedAt < 15_000 &&
+    matchesRequestedRun({
+      url: activeRun.run.url,
+      inputMode: activeRun.inputMode,
+      slides: activeRun.slides,
+    })
+  ) {
+    sendStatus("");
+    return;
+  }
+  if (
+    canCoalesceSameUrl &&
+    session.inflightRequest &&
+    matchesRequestedRun(session.inflightRequest)
+  ) {
+    sendStatus("");
+    return;
+  }
   if (
     settings.autoSummarize &&
-    ((session.lastSummarizedUrl && urlsMatch(session.lastSummarizedUrl, tabUrl)) ||
-      (session.inflightUrl && urlsMatch(session.inflightUrl, tabUrl))) &&
-    !isManual
+    !isManual &&
+    canCoalesceSameUrl &&
+    session.lastSummarizedUrl &&
+    urlsMatch(session.lastSummarizedUrl, tabUrl)
   ) {
     sendStatus("");
     return;
@@ -113,6 +161,11 @@ export async function summarizeActiveTab({
   const controller = new AbortController();
   session.runController = controller;
   session.inflightUrl = tabUrl;
+  session.inflightRequest = {
+    url: tabUrl,
+    inputMode: requestedInputMode,
+    slides: requestedWantsSlides,
+  };
   const isSuperseded = () => controller.signal.aborted || session.runController !== controller;
 
   const prefersUrlMode = Boolean(tab.url && shouldPreferUrlMode(tab.url));
@@ -352,21 +405,27 @@ export async function summarizeActiveTab({
     send({ type: "run:error", message });
     sendStatus(`Error: ${message}`);
     session.inflightUrl = null;
+    session.inflightRequest = null;
     if (!isManual && isDaemonUnreachableError(err)) {
       session.daemonRecovery.recordFailure(resolvedPayload.url);
     }
     return;
   }
 
-  send({
-    type: "run:start",
-    run: {
-      id,
-      url: resolvedPayload.url,
-      title: resolvedTitle,
-      model: settings.model,
-      reason,
-      slides: wantsSlides,
-    },
-  });
+  const run: RunStart = {
+    id,
+    url: resolvedPayload.url,
+    title: resolvedTitle,
+    model: settings.model,
+    reason,
+    slides: wantsSlides,
+  };
+  session.activeSummaryRun = {
+    run,
+    startedAt: Date.now(),
+    inputMode: requestedInputMode,
+    slides: requestedWantsSlides,
+  };
+  session.inflightRequest = null;
+  send({ type: "run:start", run });
 }

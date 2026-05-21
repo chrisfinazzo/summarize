@@ -397,6 +397,8 @@ export default defineBackground(() => {
       session.panelLastPingAt = 0;
       session.lastSummarizedUrl = null;
       session.inflightUrl = null;
+      session.inflightRequest = null;
+      session.activeSummaryRun = null;
       session.daemonRecovery.clearPending();
       panelSessionStore.deletePanelSession(windowId);
       void panelSessionStore.clearCachedExtractsForWindow(windowId);

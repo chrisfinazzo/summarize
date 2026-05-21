@@ -13,6 +13,8 @@ export function handlePanelReady<Recovery, Status>(
   session.panelLastPingAt = Date.now();
   session.lastSummarizedUrl = null;
   session.inflightUrl = null;
+  session.inflightRequest = null;
+  session.activeSummaryRun = null;
   session.runController?.abort();
   session.runController = null;
   session.agentController?.abort();
@@ -38,6 +40,8 @@ export function handlePanelClosed<Recovery, Status>(
   session.agentController = null;
   session.lastSummarizedUrl = null;
   session.inflightUrl = null;
+  session.inflightRequest = null;
+  session.activeSummaryRun = null;
   session.daemonRecovery.clearPending();
   void options.clearCachedExtractsForWindow(session.windowId);
 }

@@ -31,6 +31,7 @@
 - CLI performance: skip remote asset probes for normal web URLs so extraction reaches first stdout sooner while preserving unknown-asset fallback after URL extraction failures.
 - YouTube transcripts: try same-language caption fallbacks when the preferred caption URL is blocked or dead.
 - Chrome extension: match CLI slide defaults for YouTube slide summaries and replace transcript fallback card text with LLM-written slide summaries.
+- Chrome extension: render YouTube slide summaries through the shared CLI slide parser and coalesce duplicate slide summarize starts.
 - Chrome extension options: defer loading automation skills until the Skills tab opens so settings startup avoids the large skills bundle.
 - Chrome extension: make picker popovers opaque again and reorganize advanced options into clearer groups.
 - Chrome extension options: avoid crashing when Chrome opens settings without the extension storage API available.

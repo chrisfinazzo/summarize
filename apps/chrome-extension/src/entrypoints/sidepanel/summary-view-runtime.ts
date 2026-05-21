@@ -1,3 +1,4 @@
+import { shouldPreferUrlMode } from "@steipete/summarize-core/content/url";
 import { buildIdleSubtitle } from "../../lib/header";
 import type { PanelCachePayload } from "./panel-cache";
 import { normalizeSlideImageUrl } from "./slide-images";
@@ -191,7 +192,11 @@ export function createSummaryViewRuntime(opts: SummaryViewRuntimeOpts) {
         opts.slidesTextController.getTranscriptAvailable() ? payload.url : null,
       );
       opts.updateSlidesTextState();
-      if (!opts.slidesTextController.getTranscriptAvailable()) {
+      if (
+        !opts.slidesTextController.getTranscriptAvailable() &&
+        payload.url &&
+        !shouldPreferUrlMode(payload.url)
+      ) {
         void opts.requestSlidesContext();
       }
       opts.setSlidesAppliedRunId(opts.resolveActiveSlidesRunId());

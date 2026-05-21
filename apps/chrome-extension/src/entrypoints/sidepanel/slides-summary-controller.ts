@@ -1,4 +1,4 @@
-import { coerceSummaryWithSlides } from "../../lib/slides-text";
+import { buildSlidePresentation } from "../../lib/slides-presentation";
 import { resolveSlidesLengthArg } from "./slides-state";
 import { createStreamController } from "./stream-controller";
 import type { PanelState, RunStart, UiState } from "./types";
@@ -81,7 +81,7 @@ export function createSlidesSummaryController(options: SlidesSummaryControllerOp
     let output = markdown;
     const slides = options.getPanelState().slides?.slides ?? [];
     if (slides.length > 0) {
-      output = coerceSummaryWithSlides({
+      output = buildSlidePresentation({
         markdown,
         slides: slides.map((slide) => ({
           index: slide.index,
@@ -89,9 +89,12 @@ export function createSlidesSummaryController(options: SlidesSummaryControllerOp
         })),
         transcriptTimedText: options.getTranscriptTimedText(),
         lengthArg: resolveSlidesLengthArg(options.getLengthValue()),
-      });
+      }).markdown;
     }
-    options.updateSlideSummaryFromMarkdown(output, { preserveIfEmpty: false, source: "slides" });
+    options.updateSlideSummaryFromMarkdown(output, {
+      preserveIfEmpty: false,
+      source: "slides",
+    });
     if (!options.getPanelState().summaryMarkdown?.trim()) {
       options.renderMarkdown(output);
     }

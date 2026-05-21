@@ -99,6 +99,11 @@ export function createSidepanelSlidesRuntime({
     getToken,
     onSlides: (data) => {
       applySlidesPayload(data);
+      slidesSummaryController.maybeApplyPending();
+      const markdown = slidesSummaryController.getMarkdown();
+      if (markdown.trim()) {
+        slidesSummaryController.applyMarkdown(markdown);
+      }
     },
     onStatus: (text) => {
       slidesRunRuntime.handleSlidesStatus(text);

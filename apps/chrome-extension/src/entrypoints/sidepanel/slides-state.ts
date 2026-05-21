@@ -1,11 +1,9 @@
 import { SUMMARY_LENGTH_SPECS } from "@steipete/summarize-core/prompts";
 import type { SummaryLength, SseSlidesData } from "../../lib/runtime-contracts";
+import { buildSlidePresentation } from "../../lib/slides-presentation";
 import {
   buildSlideTextFallback,
-  coerceSummaryWithSlides,
-  parseSlideSummariesFromMarkdown,
   resolveSlideTextBudget,
-  splitSlideTitleFromText,
   splitSummaryFromSlides,
   type SlideTimelineEntry,
 } from "../../lib/slides-text";
@@ -183,29 +181,35 @@ export function deriveSlideSummaries({
   transcriptTimedText: string | null;
   lengthValue: string;
 }): { summaries: Map<number, string>; titles: Map<number, string> } | null {
-  let parsed = parseSlideSummariesFromMarkdown(markdown);
-  const hasMeaningfulSlides = Array.from(parsed.values()).some((text) => text.trim().length > 0);
-  if ((!hasMeaningfulSlides || parsed.size === 0) && slides.length > 0) {
-    const lengthArg = resolveSlidesLengthArg(lengthValue);
-    const coerced = coerceSummaryWithSlides({
-      markdown,
-      slides: createTimeline(slides),
-      transcriptTimedText,
-      lengthArg,
-    });
-    parsed = parseSlideSummariesFromMarkdown(coerced);
-  }
-  if (parsed.size === 0) return null;
-  const total = slides.length || parsed.size;
+  const lengthArg = resolveSlidesLengthArg(lengthValue);
+  const directPresentation = buildSlidePresentation({
+    markdown,
+    slides: createTimeline(slides),
+    transcriptTimedText,
+    lengthArg,
+    coerce: false,
+    includeTranscriptFallback: false,
+  });
+  const presentation =
+    directPresentation.cards.length > 0
+      ? directPresentation
+      : buildSlidePresentation({
+          markdown,
+          slides: createTimeline(slides),
+          transcriptTimedText,
+          lengthArg,
+          coerce: true,
+          includeTranscriptFallback: false,
+        });
   const summaries = new Map<number, string>();
   const titles = new Map<number, string>();
-  for (const [index, text] of parsed) {
-    const parsedSlide = splitSlideTitleFromText({ text, slideIndex: index, total });
-    const title = sanitizeSlideSummaryTitle(normalizeSlideText(parsedSlide.title ?? ""));
-    const body = normalizeSlideText(parsedSlide.body ?? "");
-    if (body) summaries.set(index, body);
-    if (title) titles.set(index, title);
+  for (const card of presentation.cards) {
+    const title = sanitizeSlideSummaryTitle(normalizeSlideText(card.title ?? ""));
+    const body = normalizeSlideText(card.body);
+    if (body) summaries.set(card.index, body);
+    if (title) titles.set(card.index, title);
   }
+  if (summaries.size === 0 && titles.size === 0) return null;
   return { summaries, titles };
 }
 
