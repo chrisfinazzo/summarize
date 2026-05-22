@@ -124,7 +124,7 @@ export function shouldAcceptRunForCurrentPage({
   activeTabUrl: string | null;
   currentSourceUrl: string | null;
 }) {
-  const expectedUrl = currentSourceUrl ?? (isMatchablePanelUrl(activeTabUrl) ? activeTabUrl : null);
+  const expectedUrl = resolveExpectedPageUrl(activeTabUrl, currentSourceUrl);
   if (!expectedUrl) return true;
   return panelUrlsMatch(runUrl, expectedUrl);
 }
@@ -139,9 +139,17 @@ export function shouldAcceptSlidesForCurrentPage({
   currentSourceUrl: string | null;
 }) {
   if (!targetUrl) return true;
-  const expectedUrl = currentSourceUrl ?? (isMatchablePanelUrl(activeTabUrl) ? activeTabUrl : null);
+  const expectedUrl = resolveExpectedPageUrl(activeTabUrl, currentSourceUrl);
   if (!expectedUrl) return true;
   return panelUrlsMatch(targetUrl, expectedUrl);
+}
+
+function resolveExpectedPageUrl(activeTabUrl: string | null, currentSourceUrl: string | null) {
+  const activeUrl = isMatchablePanelUrl(activeTabUrl) ? activeTabUrl : null;
+  const sourceUrl = isMatchablePanelUrl(currentSourceUrl) ? currentSourceUrl : null;
+
+  if (activeUrl && sourceUrl && !panelUrlsMatch(activeUrl, sourceUrl)) return activeUrl;
+  return sourceUrl ?? activeUrl;
 }
 
 export function shouldInvalidateCurrentSource({

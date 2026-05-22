@@ -177,6 +177,155 @@ test("sidepanel shows a loading state instead of going blank while waiting for a
   }
 });
 
+test("sidepanel drops an active summary stream when the active tab changes before content arrives", async ({
+  browserName: _browserName,
+}, testInfo) => {
+  const harness = await launchExtension(getBrowserFromProject(testInfo.project.name));
+
+  try {
+    await seedSettings(harness, {
+      token: "test-token",
+      autoSummarize: false,
+      slidesEnabled: false,
+    });
+    const page = await openExtensionPage(harness, "sidepanel.html", "#title");
+    await waitForPanelPort(page);
+
+    const delay = async (ms: number) => await new Promise((resolve) => setTimeout(resolve, ms));
+    const sseBody = (text: string) =>
+      ["event: chunk", `data: ${JSON.stringify({ text })}`, "", "event: done", "data: {}", ""].join(
+        "\n",
+      );
+    await page.route("http://127.0.0.1:8787/v1/summarize/run-a/events", async (route) => {
+      await delay(250);
+      await route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+        body: sseBody("Stale Summary A"),
+      });
+    });
+
+    await sendBgMessage(harness, {
+      type: "ui:state",
+      state: buildUiState({
+        tab: { id: 1, url: "https://www.youtube.com/watch?v=alpha123", title: "Alpha Tab" },
+        settings: { autoSummarize: false, tokenPresent: true, slidesEnabled: false },
+        status: "",
+      }),
+    });
+    await sendBgMessage(harness, {
+      type: "run:start",
+      run: {
+        id: "run-a",
+        url: "https://www.youtube.com/watch?v=alpha123",
+        title: "Alpha Tab",
+        model: "auto",
+        reason: "manual",
+      },
+    });
+
+    await sendBgMessage(harness, {
+      type: "ui:state",
+      state: buildUiState({
+        tab: { id: 2, url: "https://www.youtube.com/watch?v=bravo456", title: "Bravo Tab" },
+        settings: { autoSummarize: false, tokenPresent: true, slidesEnabled: false },
+        status: "",
+      }),
+    });
+
+    await expect(page.locator("#render")).toContainText("Click Summarize to start.");
+    await expect(page.locator("#render")).toContainText("Bravo Tab");
+    await page.waitForTimeout(350);
+    await expect(page.locator("#title")).toHaveText("Bravo Tab");
+    await expect(page.locator("#render")).not.toContainText("Stale Summary A");
+
+    assertNoErrors(harness);
+  } finally {
+    await closeExtension(harness.context, harness.userDataDir);
+  }
+});
+
+test("sidepanel starts a queued pending run after aborting a previous tab stream", async ({
+  browserName: _browserName,
+}, testInfo) => {
+  const harness = await launchExtension(getBrowserFromProject(testInfo.project.name));
+
+  try {
+    await seedSettings(harness, {
+      token: "test-token",
+      autoSummarize: false,
+      slidesEnabled: false,
+    });
+    const page = await openExtensionPage(harness, "sidepanel.html", "#title");
+    await waitForPanelPort(page);
+
+    const delay = async (ms: number) => await new Promise((resolve) => setTimeout(resolve, ms));
+    const sseBody = (text: string) =>
+      ["event: chunk", `data: ${JSON.stringify({ text })}`, "", "event: done", "data: {}", ""].join(
+        "\n",
+      );
+    await page.route("http://127.0.0.1:8787/v1/summarize/run-a/events", async (route) => {
+      await delay(500);
+      await route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+        body: sseBody("Stale Summary A"),
+      });
+    });
+    await page.route("http://127.0.0.1:8787/v1/summarize/run-b/events", async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+        body: sseBody("Summary B"),
+      });
+    });
+
+    const tabAState = buildUiState({
+      tab: { id: 1, url: "https://www.youtube.com/watch?v=alpha123", title: "Alpha Tab" },
+      settings: { autoSummarize: false, tokenPresent: true, slidesEnabled: false },
+      status: "",
+    });
+    const tabBState = buildUiState({
+      tab: { id: 2, url: "https://www.youtube.com/watch?v=bravo456", title: "Bravo Tab" },
+      settings: { autoSummarize: false, tokenPresent: true, slidesEnabled: false },
+      status: "",
+    });
+
+    await sendBgMessage(harness, { type: "ui:state", state: tabAState });
+    await sendBgMessage(harness, {
+      type: "run:start",
+      run: {
+        id: "run-a",
+        url: "https://www.youtube.com/watch?v=alpha123",
+        title: "Alpha Tab",
+        model: "auto",
+        reason: "manual",
+      },
+    });
+    await page.waitForTimeout(50);
+    await sendBgMessage(harness, {
+      type: "run:start",
+      run: {
+        id: "run-b",
+        url: "https://www.youtube.com/watch?v=bravo456",
+        title: "Bravo Tab",
+        model: "auto",
+        reason: "manual",
+      },
+    });
+
+    await sendBgMessage(harness, { type: "ui:state", state: tabBState });
+
+    await expect(page.locator("#title")).toHaveText("Bravo Tab");
+    await expect(page.locator("#render")).toContainText("Summary B");
+    await expect(page.locator("#render")).not.toContainText("Stale Summary A");
+
+    assertNoErrors(harness);
+  } finally {
+    await closeExtension(harness.context, harness.userDataDir);
+  }
+});
+
 test("sidepanel resumes a pending summary run when returning to the original tab", async ({
   browserName: _browserName,
 }, testInfo) => {

@@ -1253,6 +1253,9 @@ const uiStateRuntime = createUiStateRuntime({
   resolveActiveSlidesRunId,
   applyPanelCache,
   resetSummaryView,
+  abortSummaryStream: () => {
+    streamController.abort();
+  },
   hideAutomationNotice,
   hideSlideNotice,
   maybeApplyPendingSlidesSummary,

@@ -64,6 +64,7 @@ type UiStateRuntimeOpts = {
   resolveActiveSlidesRunId: () => string | null;
   applyPanelCache: (payload: PanelCachePayload, opts?: { preserveChat?: boolean }) => void;
   resetSummaryView: (opts?: { preserveChat?: boolean }) => void;
+  abortSummaryStream: () => void;
   hideAutomationNotice: () => void;
   hideSlideNotice: () => void;
   maybeApplyPendingSlidesSummary: () => void;
@@ -230,6 +231,9 @@ export function createUiStateRuntime(opts: UiStateRuntimeOpts) {
       if (navigation.resetInputModeOverride) {
         opts.setInputModeOverride(null);
       }
+      if (opts.isStreaming()) {
+        opts.abortSummaryStream();
+      }
       if (!opts.maybeStartPendingSummaryRunForUrl(nextTabUrl)) {
         applyCachedOrReset(opts, nextTabId, nextTabUrl, navigation.preserveChat);
       }
@@ -240,6 +244,9 @@ export function createUiStateRuntime(opts: UiStateRuntimeOpts) {
       } else if (navigation.shouldClearChat) {
         void opts.clearChatHistoryForActiveTab();
         opts.resetChatState();
+      }
+      if (opts.isStreaming()) {
+        opts.abortSummaryStream();
       }
       if (!opts.maybeStartPendingSummaryRunForUrl(nextTabUrl)) {
         applyCachedOrReset(opts, opts.getActiveTabId(), nextTabUrl, navigation.preserveChat);
@@ -337,6 +344,9 @@ export function createUiStateRuntime(opts: UiStateRuntimeOpts) {
         }
         opts.panelState.currentSource = null;
         opts.setCurrentRunTabId(null);
+        if (opts.isStreaming()) {
+          opts.abortSummaryStream();
+        }
         opts.resetSummaryView({ preserveChat });
       } else if (nextTabTitle && nextTabTitle !== opts.panelState.currentSource.title) {
         opts.panelState.currentSource = {

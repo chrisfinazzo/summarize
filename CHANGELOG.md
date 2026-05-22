@@ -4,6 +4,8 @@
 
 ### Fixes
 
+- Chrome extension: abort stale side-panel summary streams on tab changes so delayed output from a closed or replaced tab cannot render under the new page title.
+
 ## 0.16.3 - 2026-05-22
 
 ### Fixes
