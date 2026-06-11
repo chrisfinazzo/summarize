@@ -21,14 +21,14 @@
 - Chrome extension: avoid throttled offscreen canvas blob callbacks so MediaBunny slide JPEGs encode in milliseconds instead of roughly one second per frame.
 - YouTube media: prefer direct audio already exposed by the active player or watch page before requesting Android VR media, with resolver and browser decoder diagnostics in extension logs.
 - Extension tests: load the Firefox build through Mozilla `web-ext` in CI and run daily live YouTube resolver plus daemonless Chrome transcription checks.
+- Speaker identification: preserve fair bounded evidence for long or malformed diarization turns, use model-compatible OpenAI options, and keep usage-less paid calls from reporting a false `$0` estimate.
+- HTML extraction: normalize LinkeDOM HTML attribute names case-insensitively while preserving case-sensitive SVG and MathML attributes.
 
 ## 0.17.1 - 2026-06-11
 
 ### Fixes
 
 - Pi CLI: pass summary prompts through private temporary file attachments because current Pi print mode does not read stdin.
-- Speaker identification: preserve fair bounded evidence for long or malformed diarization turns, use model-compatible OpenAI options, and keep usage-less paid calls from reporting a false `$0` estimate.
-- HTML extraction: normalize LinkeDOM HTML attribute names case-insensitively while preserving case-sensitive SVG and MathML attributes.
 - Dependencies: update Markdansi to 0.3.1 and refresh the dependency lockfile.
 - Release: allow exact-version smoke tests to bypass the minimum release age for freshly published packages.
 

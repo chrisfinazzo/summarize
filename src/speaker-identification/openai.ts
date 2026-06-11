@@ -49,7 +49,7 @@ function selectEvidenceSegments(segments: TranscriptSegment[]): TranscriptSegmen
 
   const bySpeaker = new Map<string, number[]>();
   for (const [index, segment] of segments.entries()) {
-    const speaker = normalizeEvidenceSpeaker(segment.speaker);
+    const speaker = rawEvidenceSpeaker(segment.speaker);
     if (!speaker) continue;
     let indices = bySpeaker.get(speaker);
     if (!indices) {
@@ -76,18 +76,18 @@ function selectEvidenceSegments(segments: TranscriptSegment[]): TranscriptSegmen
 export function buildSpeakerEvidence(segments: TranscriptSegment[]): string[] {
   const bySpeaker = new Map<string, EvidenceCursor[]>();
   for (const [order, segment] of selectEvidenceSegments(segments).entries()) {
-    const speaker = normalizeEvidenceSpeaker(segment.speaker);
-    if (!speaker || segment.text.length === 0) continue;
-    let cursors = bySpeaker.get(speaker);
+    const rawSpeaker = rawEvidenceSpeaker(segment.speaker);
+    if (!rawSpeaker || segment.text.length === 0) continue;
+    let cursors = bySpeaker.get(rawSpeaker);
     if (!cursors) {
       if (bySpeaker.size >= MAX_EVIDENCE_SPEAKERS) continue;
       cursors = [];
-      bySpeaker.set(speaker, cursors);
+      bySpeaker.set(rawSpeaker, cursors);
     }
     cursors.push({
       order,
       startMs: segment.startMs,
-      speaker,
+      speaker: formatEvidenceSpeaker(rawSpeaker, [...bySpeaker.keys()].indexOf(rawSpeaker) + 1),
       text: segment.text,
       rawOffset: 0,
       rawEnd: Math.min(segment.text.length, MAX_EVIDENCE_CHARACTERS),
@@ -127,15 +127,18 @@ export function buildSpeakerEvidence(segments: TranscriptSegment[]): string[] {
   return selected.sort((a, b) => a.order - b.order || a.part - b.part).map((entry) => entry.line);
 }
 
-function normalizeEvidenceSpeaker(value: string | null | undefined): string | null {
+function rawEvidenceSpeaker(value: string | null | undefined): string | null {
   if (!value) return null;
-  const scanLimit = MAX_EVIDENCE_SPEAKER_CHARACTERS * 2;
-  const normalized = value.slice(0, scanLimit).replace(/\s+/g, " ").trim();
-  if (!normalized) return null;
-  if (normalized.length <= MAX_EVIDENCE_SPEAKER_CHARACTERS && value.length <= scanLimit) {
-    return normalized;
-  }
-  return `${normalized.slice(0, MAX_EVIDENCE_SPEAKER_CHARACTERS - 3).trimEnd()}...`;
+  return value.trim() ? value : null;
+}
+
+function formatEvidenceSpeaker(value: string, ordinal: number): string {
+  if (value.length <= MAX_EVIDENCE_SPEAKER_CHARACTERS && !/[\r\n\t]/.test(value)) return value;
+  const prefix = `label[${ordinal}]=`;
+  const available = Math.max(1, MAX_EVIDENCE_SPEAKER_CHARACTERS - prefix.length - 5);
+  const truncated = value.length > available;
+  const encoded = JSON.stringify(value.slice(0, available));
+  return `${prefix}${encoded}${truncated ? "..." : ""}`;
 }
 
 function takeEvidenceLine(
@@ -156,7 +159,8 @@ function takeEvidenceLine(
     }
     const entry = { order: cursor.order, part: cursor.part, line: `${prefix}${text}` };
     cursor.part += 1;
-    if (cursor.rawOffset >= cursor.rawEnd) state.cursorIndex += 1;
+    state.cursorIndex += 1;
+    if (cursor.rawOffset < cursor.rawEnd) state.cursors.push(cursor);
     return entry;
   }
   return null;
