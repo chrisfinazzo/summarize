@@ -17,6 +17,7 @@ const YOUTUBE_TRANSCRIPT_SOURCES = new Set<TranscriptSource>([
   "captionTracks",
   "youtube-media",
   "apify",
+  "yt-dlp",
 ]);
 
 function readSourceMetrics(value: unknown): SourceMetrics | null {
@@ -92,7 +93,9 @@ export async function refreshYoutubeSourceMetrics({
   const observedTime = sourceMetrics ? Date.parse(sourceMetrics.observedAt) : Number.NaN;
   const metricsAreStale =
     !Number.isFinite(observedTime) || Date.now() - observedTime >= SOURCE_METRICS_TTL_MS;
-  const shouldRefresh = htmlPlayerMetadata === null && (sourceMetrics === null || metricsAreStale);
+  const shouldRefresh =
+    htmlPlayerMetadata?.viewCount === null ||
+    (htmlPlayerMetadata === null && (sourceMetrics === null || metricsAreStale));
   const remainingTimeoutMs = remainingMetricsMs();
 
   if (shouldRefresh && remainingTimeoutMs > 0) {

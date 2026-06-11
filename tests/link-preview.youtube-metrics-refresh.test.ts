@@ -131,6 +131,50 @@ describe("YouTube source metric refresh", () => {
     expect(result.sourceMetrics?.observedAt).not.toBe("2026-06-01T00:00:00.000Z");
   });
 
+  it("falls back to yt-dlp when HTML player metadata has no view count", async () => {
+    resolveTranscriptForLink.mockResolvedValue({
+      text: "fresh transcript",
+      source: "captionTracks",
+      metadata: {},
+      diagnostics: { cacheStatus: "miss" },
+    });
+    extractYoutubePlayerMetadata.mockReturnValue({
+      durationSeconds: 60,
+      viewCount: null,
+    });
+    fetchMediaMetadataWithYtDlp.mockResolvedValue({
+      durationSeconds: 60,
+      viewCount: 25,
+    });
+
+    const result = await buildResultFromHtmlDocument({
+      url: "https://www.youtube.com/watch?v=abcdefghijk",
+      html: "<!doctype html><html><head><title>Video</title></head><body></body></html>",
+      cacheMode: "default",
+      maxCharacters: null,
+      youtubeTranscriptMode: "web",
+      mediaTranscriptMode: "auto",
+      firecrawlDiagnostics: {
+        attempted: false,
+        used: false,
+        cacheMode: "default",
+        cacheStatus: "bypassed",
+        notes: null,
+      },
+      markdownRequested: false,
+      markdownMode: "off",
+      timeoutMs: 2_000,
+      deps: { fetch: vi.fn(), ytDlpPath: "/usr/bin/yt-dlp" } as never,
+      readabilityCandidate: null,
+    });
+
+    expect(fetchMediaMetadataWithYtDlp).toHaveBeenCalled();
+    expect(result.sourceMetrics).toMatchObject({
+      videoId: "abcdefghijk",
+      viewCount: 25,
+    });
+  });
+
   it("does not refresh a fresh unavailable observation from the transcript cache", async () => {
     const observedAt = new Date().toISOString();
     resolveTranscriptForLink.mockResolvedValue({
@@ -247,6 +291,46 @@ describe("YouTube source metric refresh", () => {
       "https://www.youtube.com/watch?v=abcdefghijk",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it("recovers embedded video metrics for a legacy yt-dlp transcript", async () => {
+    resolveTranscriptForLink.mockResolvedValue({
+      text: "cached transcript",
+      source: "yt-dlp",
+      metadata: {},
+      diagnostics: { cacheStatus: "hit" },
+    });
+    extractYoutubePlayerMetadata.mockReturnValue({
+      durationSeconds: 60,
+      viewCount: 35,
+    });
+    const fetchImpl = vi.fn(async () => new Response("<html></html>", { status: 200 }));
+
+    const result = await buildResultFromHtmlDocument({
+      url: "https://example.com/episode",
+      html: '<!doctype html><html><head><title>Episode</title></head><body><iframe src="https://www.youtube.com/embed/abcdefghijk"></iframe></body></html>',
+      cacheMode: "default",
+      maxCharacters: null,
+      youtubeTranscriptMode: "web",
+      mediaTranscriptMode: "auto",
+      firecrawlDiagnostics: {
+        attempted: false,
+        used: false,
+        cacheMode: "default",
+        cacheStatus: "bypassed",
+        notes: null,
+      },
+      markdownRequested: false,
+      markdownMode: "off",
+      timeoutMs: 2_000,
+      deps: { fetch: fetchImpl, ytDlpPath: null } as never,
+      readabilityCandidate: null,
+    });
+
+    expect(result.sourceMetrics).toMatchObject({
+      videoId: "abcdefghijk",
+      viewCount: 35,
+    });
   });
 
   it("does not attach embed metrics to an article resolved by the generic provider", async () => {
