@@ -6,6 +6,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_OPENAI_UPLOAD_BYTES } from "../packages/core/src/transcription/whisper/constants.js";
 import {
   buildDiarizationModelChain,
+  isRetryableOpenAiError,
+  resolveOpenAiDiarizationChunkSeconds,
+  resolveOpenAiDiarizationBitrateKbps,
   resolveDiarizationProviderOrder,
   transcribeMediaFileWithDiarization,
 } from "../packages/core/src/transcription/whisper/diarization.js";
@@ -14,12 +17,15 @@ import {
   transcribeFileWithElevenLabsDiarization,
 } from "../packages/core/src/transcription/whisper/elevenlabs.js";
 import {
+  OpenAiTranscriptionHttpError,
   parseOpenAiDiarizedSegments,
   transcribeFileWithOpenAiDiarization,
 } from "../packages/core/src/transcription/whisper/openai.js";
 
 const ffmpegMocks = vi.hoisted(() => ({
   isFfmpegAvailable: vi.fn(async () => true),
+  probeMediaDurationSecondsWithFfprobe: vi.fn(async () => null),
+  runFfmpegSegment: vi.fn(),
   runFfmpegTranscodeToMp3: vi.fn(),
 }));
 
@@ -30,6 +36,32 @@ vi.mock("../packages/core/src/transcription/whisper/ffmpeg.js", async (importOri
 });
 
 describe("transcription diarization", () => {
+  it("selects a duration-aware OpenAI upload bitrate", () => {
+    expect(resolveOpenAiDiarizationBitrateKbps(null)).toBe(24);
+    expect(resolveOpenAiDiarizationBitrateKbps(2 * 60 * 60)).toBe(24);
+    expect(resolveOpenAiDiarizationBitrateKbps(3 * 60 * 60)).toBe(16);
+    expect(resolveOpenAiDiarizationBitrateKbps(5 * 60 * 60)).toBe(8);
+  });
+
+  it("balances long OpenAI chunks to avoid a tiny trailing request", () => {
+    expect(resolveOpenAiDiarizationChunkSeconds(481)).toBe(241);
+    expect(resolveOpenAiDiarizationChunkSeconds(600)).toBe(300);
+    expect(resolveOpenAiDiarizationChunkSeconds(961)).toBe(321);
+  });
+
+  it("retries only transient OpenAI chunk failures", () => {
+    expect(isRetryableOpenAiError(new OpenAiTranscriptionHttpError(429, 1_000, null))).toBe(true);
+    expect(isRetryableOpenAiError(new OpenAiTranscriptionHttpError(400, null, null))).toBe(false);
+    expect(isRetryableOpenAiError(new DOMException("timed out", "TimeoutError"))).toBe(true);
+    expect(isRetryableOpenAiError(new TypeError("fetch failed"))).toBe(true);
+    expect(
+      isRetryableOpenAiError(
+        Object.assign(new TypeError("terminated"), { cause: { code: "UND_ERR_SOCKET" } }),
+      ),
+    ).toBe(true);
+    expect(isRetryableOpenAiError(new Error("invalid diarized segment payload"))).toBe(false);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -253,6 +285,266 @@ describe("transcription diarization", () => {
     }
   });
 
+  it("allows a speechless OpenAI chunk without accepting an empty full recording", async () => {
+    const root = await mkdtemp(join(tmpdir(), "summarize-openai-diarize-empty-"));
+    const filePath = join(root, "audio.mp3");
+    await writeFile(filePath, new Uint8Array([1, 2, 3]));
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ segments: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    try {
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(
+        transcribeFileWithOpenAiDiarization({
+          filePath,
+          mediaType: "audio/mpeg",
+          filename: "audio.mp3",
+          apiKey: "OPENAI",
+        }),
+      ).rejects.toThrow(/no speaker-labelled segments/);
+      const chunk = await transcribeFileWithOpenAiDiarization({
+        filePath,
+        mediaType: "audio/mpeg",
+        filename: "audio.mp3",
+        apiKey: "OPENAI",
+        options: { allowEmpty: true },
+      });
+      expect(chunk).toMatchObject({ text: null, error: null, segments: [] });
+
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ segments: [{ start: 0, end: 1, speaker: "A", text: "" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      const silenceMarker = await transcribeFileWithOpenAiDiarization({
+        filePath,
+        mediaType: "audio/mpeg",
+        filename: "audio.mp3",
+        apiKey: "OPENAI",
+        options: { allowEmpty: true },
+      });
+      expect(silenceMarker).toMatchObject({ text: null, error: null, segments: [] });
+
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ text: "Spoken content", segments: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      await expect(
+        transcribeFileWithOpenAiDiarization({
+          filePath,
+          mediaType: "audio/mpeg",
+          filename: "audio.mp3",
+          apiKey: "OPENAI",
+          options: { allowEmpty: true },
+        }),
+      ).rejects.toThrow(/transcript text without diarized segments/);
+
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ nope: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      await expect(
+        transcribeFileWithOpenAiDiarization({
+          filePath,
+          mediaType: "audio/mpeg",
+          filename: "audio.mp3",
+          apiKey: "OPENAI",
+          options: { allowEmpty: true },
+        }),
+      ).rejects.toThrow(/invalid diarized segment payload/);
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves OpenAI rate-limit reset timing on HTTP errors", async () => {
+    const root = await mkdtemp(join(tmpdir(), "summarize-openai-diarize-rate-limit-"));
+    const filePath = join(root, "audio.mp3");
+    await writeFile(filePath, new Uint8Array([1, 2, 3]));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response("rate limited", {
+            status: 429,
+            headers: {
+              "x-ratelimit-remaining-tokens": "0",
+              "x-ratelimit-reset-tokens": "1m2.5s",
+            },
+          }),
+      ),
+    );
+
+    try {
+      const error = await transcribeFileWithOpenAiDiarization({
+        filePath,
+        mediaType: "audio/mpeg",
+        filename: "audio.mp3",
+        apiKey: "OPENAI",
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(OpenAiTranscriptionHttpError);
+      expect(error).toMatchObject({ status: 429, retryAfterMs: 62_500 });
+
+      vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+        new Response("Rate limit reached on tokens per min (TPM)", {
+          status: 429,
+          headers: {
+            "x-ratelimit-remaining-tokens": "100",
+            "x-ratelimit-reset-requests": "100ms",
+            "x-ratelimit-reset-tokens": "45s",
+          },
+        }),
+      );
+      const tokenBucketError = await transcribeFileWithOpenAiDiarization({
+        filePath,
+        mediaType: "audio/mpeg",
+        filename: "audio.mp3",
+        apiKey: "OPENAI",
+      }).catch((caught: unknown) => caught);
+      expect(tokenBucketError).toMatchObject({ status: 429, retryAfterMs: 45_000 });
+
+      vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+        new Response("rate limited", {
+          status: 429,
+          headers: { "retry-after-ms": "60000" },
+        }),
+      );
+      const preciseError = await transcribeFileWithOpenAiDiarization({
+        filePath,
+        mediaType: "audio/mpeg",
+        filename: "audio.mp3",
+        apiKey: "OPENAI",
+      }).catch((caught: unknown) => caught);
+      expect(preciseError).toMatchObject({ status: 429, retryAfterMs: 60_000 });
+
+      vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+        new Response("rate limited", {
+          status: 429,
+          headers: {
+            "x-ratelimit-remaining-requests": "0",
+            "x-ratelimit-reset-requests": "300",
+          },
+        }),
+      );
+      const unitlessResetError = await transcribeFileWithOpenAiDiarization({
+        filePath,
+        mediaType: "audio/mpeg",
+        filename: "audio.mp3",
+        apiKey: "OPENAI",
+      }).catch((caught: unknown) => caught);
+      expect(unitlessResetError).toMatchObject({ status: 429, retryAfterMs: 300_000 });
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("chunks long OpenAI diarization and keeps chunk-local labels distinct", async () => {
+    const root = await mkdtemp(join(tmpdir(), "summarize-openai-diarize-long-"));
+    const filePath = join(root, "audio.mp3");
+    await writeFile(filePath, new Uint8Array([1, 2, 3]));
+    ffmpegMocks.runFfmpegSegment.mockImplementationOnce(async ({ outputPattern }) => {
+      await writeFile(outputPattern.replace("%05d", "00000"), new Uint8Array([1]));
+      await writeFile(outputPattern.replace("%05d", "00001"), new Uint8Array([2]));
+    });
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            segments: [{ start: 1, end: 2, speaker: "A", text: "Hello." }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+
+    try {
+      vi.stubGlobal("fetch", fetchMock);
+      const result = await transcribeMediaFileWithDiarization({
+        filePath,
+        mediaType: "audio/mpeg",
+        filename: "audio.mp3",
+        preference: "openai",
+        elevenlabsApiKey: null,
+        openaiApiKey: "OPENAI",
+        env: {},
+        totalDurationSeconds: 600,
+      });
+      expect(ffmpegMocks.runFfmpegSegment).toHaveBeenCalledWith(
+        expect.objectContaining({ segmentSeconds: 300 }),
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(result.segments).toEqual([
+        { startMs: 1_000, endMs: 2_000, speaker: "Speaker 1", text: "Hello." },
+        { startMs: 301_000, endMs: 302_000, speaker: "Speaker 1001", text: "Hello." },
+      ]);
+      expect(result.text).toBe("Speaker 1: Hello.\nSpeaker 1001: Hello.");
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("chunks OpenAI media when duration probing is unavailable", async () => {
+    const root = await mkdtemp(join(tmpdir(), "summarize-openai-diarize-unknown-duration-"));
+    const filePath = join(root, "audio.webm");
+    await writeFile(filePath, new Uint8Array([1, 2, 3]));
+    ffmpegMocks.runFfmpegSegment.mockImplementationOnce(async ({ outputPattern }) => {
+      await writeFile(outputPattern.replace("%05d", "00000"), new Uint8Array([1]));
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              segments: [{ start: 1, end: 2, speaker: "A", text: "Hello." }],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+
+    const progress: Array<{
+      processedDurationSeconds: number | null;
+      totalDurationSeconds: number | null;
+    }> = [];
+    try {
+      const result = await transcribeMediaFileWithDiarization({
+        filePath,
+        mediaType: "audio/webm",
+        filename: "audio.webm",
+        preference: "openai",
+        elevenlabsApiKey: null,
+        openaiApiKey: "OPENAI",
+        env: {},
+        totalDurationSeconds: null,
+        onProgress: (event) => progress.push(event),
+      });
+      expect(ffmpegMocks.runFfmpegSegment).toHaveBeenCalledWith(
+        expect.objectContaining({ segmentSeconds: 480 }),
+      );
+      expect(result.text).toBe("Speaker 1: Hello.");
+      expect(progress.at(-1)).toMatchObject({
+        processedDurationSeconds: null,
+        totalDurationSeconds: null,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("removes partial OpenAI compression output after ffmpeg failure", async () => {
     const root = await mkdtemp(join(tmpdir(), "summarize-openai-diarize-cleanup-"));
     const filePath = join(root, "large-audio.wav");
@@ -275,7 +567,7 @@ describe("transcription diarization", () => {
         elevenlabsApiKey: null,
         openaiApiKey: "OPENAI",
         env: {},
-        totalDurationSeconds: null,
+        totalDurationSeconds: 60,
       });
       expect(result.error?.message).toContain("ffmpeg failed");
       expect(partialPath).not.toBeNull();

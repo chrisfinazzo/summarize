@@ -504,6 +504,8 @@ Bare `--diarize` prefers ElevenLabs Scribe v2 (`ELEVENLABS_API_KEY`) and falls b
 `gpt-4o-transcribe-diarize` (`OPENAI_API_KEY`). Speaker changes are emitted as `Speaker <label>: ...`;
 combine with `--timestamps` for `[mm:ss] Speaker <label>: ...`. Local files are transcribed directly;
 YouTube and remote direct media use their normal download path.
+Long OpenAI recordings are split into bounded chunks; timestamps are reassembled and
+chunk-local provider labels stay distinct so label resets cannot silently merge different voices.
 
 `--identify-speakers` replaces generic labels with names for YouTube and direct media. Repeat `--speaker-at <timestamp=name>`
 for authoritative examples; unresolved labels are inferred with OpenAI GPT-5.5 and only accepted above

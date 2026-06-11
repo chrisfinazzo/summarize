@@ -17,6 +17,7 @@
 - CLI: use the Codex runtime default model instead of pinning auto fallback to an obsolete model.
 - Daemon: defer cache shutdown until in-flight summary work drains, preventing late writes through finalized SQLite statements.
 - ElevenLabs diarization: let the configured ten-minute transcription deadline govern long recordings instead of Undici’s hidden five-minute response-header timeout.
+- OpenAI diarization: split long recordings into bounded chunks with isolated speaker labels, timestamp offsets, rate-limit-aware retries, and automatic temporary-file cleanup.
 - Dependencies: replace Ora, tslog, and the FAL SDK with focused local implementations while retaining spinner, daemon logging, retry, multipart upload, and FAL transcription behavior.
 - Chrome extension: replace the bundled browser FFmpeg WebAssembly runtime with MediaBunny and native WebCodecs, adding AV1 frame extraction while reducing the packaged extension size.
 - Chrome extension: avoid throttled offscreen canvas blob callbacks so MediaBunny slide JPEGs encode in milliseconds instead of roughly one second per frame.

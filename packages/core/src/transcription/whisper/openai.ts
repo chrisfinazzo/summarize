@@ -9,6 +9,18 @@ import { ensureWhisperFilenameExtension, toArrayBuffer } from "./utils.js";
 type Env = Record<string, string | undefined>;
 export const OPENAI_DIARIZATION_MODEL = "gpt-4o-transcribe-diarize";
 
+export class OpenAiTranscriptionHttpError extends Error {
+  override name = "OpenAiTranscriptionHttpError";
+
+  constructor(
+    readonly status: number,
+    readonly retryAfterMs: number | null,
+    detail: string | null,
+  ) {
+    super(`OpenAI transcription failed (${status})${detail ? `: ${detail}` : ""}`);
+  }
+}
+
 export async function transcribeWithOpenAi(
   bytes: Uint8Array,
   mediaType: string,
@@ -41,8 +53,11 @@ export async function transcribeWithOpenAi(
 
   if (!response.ok) {
     const detail = await readErrorDetail(response);
-    const suffix = detail ? `: ${detail}` : "";
-    throw new Error(`OpenAI transcription failed (${response.status})${suffix}`);
+    throw new OpenAiTranscriptionHttpError(
+      response.status,
+      resolveRetryAfterMs(response.headers, response.status, detail),
+      detail,
+    );
   }
 
   const payload = (await response.json()) as { text?: unknown };
@@ -65,6 +80,7 @@ export async function transcribeFileWithOpenAiDiarization({
   options?: {
     baseUrl?: string | null;
     env?: Env;
+    allowEmpty?: boolean;
   };
 }): Promise<WhisperTranscriptionResult> {
   const form = new FormData();
@@ -87,17 +103,55 @@ export async function transcribeFileWithOpenAiDiarization({
   });
   if (!response.ok) {
     const detail = await readErrorDetail(response);
-    const suffix = detail ? `: ${detail}` : "";
-    throw new Error(`OpenAI transcription failed (${response.status})${suffix}`);
+    throw new OpenAiTranscriptionHttpError(
+      response.status,
+      resolveRetryAfterMs(response.headers, response.status, detail),
+      detail,
+    );
   }
 
-  const payload = (await response.json()) as { segments?: unknown };
+  const payload = (await response.json()) as { segments?: unknown; text?: unknown };
+  if (!Array.isArray(payload.segments)) {
+    throw new Error("OpenAI transcription returned an invalid diarized segment payload");
+  }
   const segments = parseOpenAiDiarizedSegments(payload.segments);
+  const meaningfulSegmentCount = payload.segments.filter(
+    (segment) => !isIgnorableEmptyDiarizedSegment(segment),
+  ).length;
+  if (segments.length !== meaningfulSegmentCount) {
+    throw new Error("OpenAI transcription returned malformed diarized segments");
+  }
   const text = formatDiarizedTranscript(segments);
   if (!text) {
+    if (options?.allowEmpty) {
+      if (typeof payload.text === "string" && payload.text.trim().length > 0) {
+        throw new Error("OpenAI transcription returned transcript text without diarized segments");
+      }
+      return {
+        text: null,
+        provider: "openai",
+        error: null,
+        notes: ["OpenAI diarization: chunk contained no speech"],
+        segments: [],
+      };
+    }
     throw new Error("OpenAI transcription returned no speaker-labelled segments");
   }
   return { text, provider: "openai", error: null, notes: [], segments };
+}
+
+function isIgnorableEmptyDiarizedSegment(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const segment = value as Record<string, unknown>;
+  return (
+    typeof segment.text === "string" &&
+    segment.text.trim().length === 0 &&
+    typeof segment.speaker === "string" &&
+    segment.speaker.trim().length > 0 &&
+    typeof segment.start === "number" &&
+    Number.isFinite(segment.start) &&
+    segment.start >= 0
+  );
 }
 
 export function parseOpenAiDiarizedSegments(segments: unknown): TranscriptionSegment[] {
@@ -133,6 +187,63 @@ export function shouldRetryOpenAiViaFfmpeg(error: Error): boolean {
     msg.includes("could not be decoded") ||
     msg.includes("format is not supported")
   );
+}
+
+function resolveRetryAfterMs(
+  headers: Headers,
+  status: number,
+  detail: string | null,
+): number | null {
+  const retryAfterMs = Number(headers.get("retry-after-ms"));
+  if (headers.has("retry-after-ms") && Number.isFinite(retryAfterMs) && retryAfterMs >= 0) {
+    return retryAfterMs;
+  }
+  const retryAfter = headers.get("retry-after");
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1_000;
+    const at = Date.parse(retryAfter);
+    if (Number.isFinite(at)) return Math.max(0, at - Date.now());
+  }
+  if (status !== 429) return null;
+  const tokenReset = parseRateLimitDurationMs(headers.get("x-ratelimit-reset-tokens"));
+  const requestReset = parseRateLimitDurationMs(headers.get("x-ratelimit-reset-requests"));
+  const remainingTokens = headers.get("x-ratelimit-remaining-tokens");
+  const remainingRequests = headers.get("x-ratelimit-remaining-requests");
+  const exhaustedResets = [
+    remainingTokens !== null && Number(remainingTokens) === 0 ? tokenReset : null,
+    remainingRequests !== null && Number(remainingRequests) === 0 ? requestReset : null,
+  ].filter((value): value is number => value !== null);
+  if (exhaustedResets.length > 0) return Math.max(...exhaustedResets);
+  const normalizedDetail = detail?.toLowerCase() ?? "";
+  if (/tokens per|\btpm\b|token rate/.test(normalizedDetail) && tokenReset !== null) {
+    return tokenReset;
+  }
+  if (/requests per|\brpm\b|request rate/.test(normalizedDetail) && requestReset !== null) {
+    return requestReset;
+  }
+  const availableResets = [tokenReset, requestReset].filter(
+    (value): value is number => value !== null,
+  );
+  return availableResets.length > 0 ? Math.max(...availableResets) : null;
+}
+
+function parseRateLimitDurationMs(value: string | null): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric) && numeric >= 0) return numeric * 1_000;
+  const unitPattern = /(\d+(?:\.\d+)?)(ms|s|m|h)/g;
+  let total = 0;
+  let consumed = "";
+  for (const match of trimmed.matchAll(unitPattern)) {
+    const amount = Number(match[1]);
+    const unit = match[2];
+    consumed += match[0];
+    total +=
+      amount * (unit === "ms" ? 1 : unit === "s" ? 1_000 : unit === "m" ? 60_000 : 3_600_000);
+  }
+  return consumed === trimmed && total >= 0 ? total : null;
 }
 
 async function readErrorDetail(response: Response): Promise<string | null> {

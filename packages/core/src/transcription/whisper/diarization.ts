@@ -1,21 +1,36 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { MAX_OPENAI_UPLOAD_BYTES } from "./constants.js";
+import { formatDiarizedTranscript } from "./diarization-format.js";
 import {
   ELEVENLABS_DIARIZATION_MODEL,
   transcribeFileWithElevenLabsDiarization,
 } from "./elevenlabs.js";
-import { isFfmpegAvailable, runFfmpegTranscodeToMp3 } from "./ffmpeg.js";
-import { OPENAI_DIARIZATION_MODEL, transcribeFileWithOpenAiDiarization } from "./openai.js";
+import {
+  isFfmpegAvailable,
+  probeMediaDurationSecondsWithFfprobe,
+  runFfmpegSegment,
+  runFfmpegTranscodeToMp3,
+} from "./ffmpeg.js";
+import {
+  OPENAI_DIARIZATION_MODEL,
+  OpenAiTranscriptionHttpError,
+  transcribeFileWithOpenAiDiarization,
+} from "./openai.js";
 import type {
   DiarizationPreference,
   DiarizationProvider,
+  TranscriptionSegment,
   WhisperProgressEvent,
   WhisperTranscriptionResult,
 } from "./types.js";
 import { wrapError } from "./utils.js";
+
+export const OPENAI_DIARIZATION_CHUNK_SECONDS = 8 * 60;
+const OPENAI_DIARIZATION_CHUNK_CONCURRENCY = 1;
+const OPENAI_DIARIZATION_CHUNK_ATTEMPTS = 3;
 
 export function resolveDiarizationProviderOrder({
   preference,
@@ -79,17 +94,23 @@ export async function transcribeMediaFileWithDiarization({
     };
   }
 
+  const probedDurationSeconds = providers.includes("openai")
+    ? await probeMediaDurationSecondsWithFfprobe(filePath)
+    : null;
+  const effectiveDurationSeconds =
+    totalDurationSeconds !== null && probedDurationSeconds !== null
+      ? Math.max(totalDurationSeconds, probedDurationSeconds)
+      : (totalDurationSeconds ?? probedDurationSeconds);
   onProgress?.({
     partIndex: null,
     parts: null,
     processedDurationSeconds: null,
-    totalDurationSeconds,
+    totalDurationSeconds: effectiveDurationSeconds,
   });
   const notes: string[] = [];
   let lastError: Error | null = null;
 
   for (const [index, provider] of providers.entries()) {
-    let preparedOpenAiFile: string | null = null;
     try {
       const result =
         provider === "elevenlabs"
@@ -99,22 +120,15 @@ export async function transcribeMediaFileWithDiarization({
               filename,
               apiKey: elevenlabsApiKey!,
             })
-          : await (async () => {
-              const prepared = await prepareOpenAiDiarizationFile({
-                filePath,
-                mediaType,
-                filename,
-              });
-              preparedOpenAiFile = prepared.cleanupPath;
-              if (prepared.note) notes.push(prepared.note);
-              return await transcribeFileWithOpenAiDiarization({
-                filePath: prepared.filePath,
-                mediaType: prepared.mediaType,
-                filename: prepared.filename,
-                apiKey: openaiApiKey!,
-                options: { env },
-              });
-            })();
+          : await transcribeOpenAiMediaFile({
+              filePath,
+              mediaType,
+              filename,
+              apiKey: openaiApiKey!,
+              env,
+              totalDurationSeconds: effectiveDurationSeconds,
+              onProgress,
+            });
       return { ...result, notes: [...notes, ...result.notes] };
     } catch (caught) {
       lastError = wrapError(`${providerLabel(provider)} diarization failed`, caught);
@@ -124,8 +138,6 @@ export async function transcribeMediaFileWithDiarization({
           `${providerLabel(provider)} diarization failed; falling back to ${providerLabel(next)}: ${lastError.message}`,
         );
       }
-    } finally {
-      if (preparedOpenAiFile) await fs.unlink(preparedOpenAiFile).catch(() => {});
     }
   }
 
@@ -136,6 +148,256 @@ export async function transcribeMediaFileWithDiarization({
     notes,
     segments: null,
   };
+}
+
+async function transcribeOpenAiMediaFile({
+  filePath,
+  mediaType,
+  filename,
+  apiKey,
+  env,
+  totalDurationSeconds,
+  onProgress,
+}: {
+  filePath: string;
+  mediaType: string;
+  filename: string | null;
+  apiKey: string;
+  env: Record<string, string | undefined>;
+  totalDurationSeconds: number | null;
+  onProgress?: ((event: WhisperProgressEvent) => void) | null;
+}): Promise<WhisperTranscriptionResult> {
+  const shouldChunk =
+    totalDurationSeconds !== null
+      ? totalDurationSeconds > OPENAI_DIARIZATION_CHUNK_SECONDS
+      : await isFfmpegAvailable();
+  if (shouldChunk) {
+    return await transcribeOpenAiMediaFileInChunks({
+      filePath,
+      apiKey,
+      env,
+      totalDurationSeconds,
+      onProgress,
+    });
+  }
+
+  const prepared = await prepareOpenAiDiarizationFile({
+    filePath,
+    mediaType,
+    filename,
+    totalDurationSeconds,
+  });
+  try {
+    const result = await transcribeFileWithOpenAiDiarization({
+      filePath: prepared.filePath,
+      mediaType: prepared.mediaType,
+      filename: prepared.filename,
+      apiKey,
+      options: { env },
+    });
+    return {
+      ...result,
+      notes: prepared.note ? [prepared.note, ...result.notes] : result.notes,
+    };
+  } finally {
+    if (prepared.cleanupPath) await fs.unlink(prepared.cleanupPath).catch(() => {});
+  }
+}
+
+async function transcribeOpenAiMediaFileInChunks({
+  filePath,
+  apiKey,
+  env,
+  totalDurationSeconds,
+  onProgress,
+}: {
+  filePath: string;
+  apiKey: string;
+  env: Record<string, string | undefined>;
+  totalDurationSeconds: number | null;
+  onProgress?: ((event: WhisperProgressEvent) => void) | null;
+}): Promise<WhisperTranscriptionResult> {
+  if (!(await isFfmpegAvailable())) {
+    throw new Error("OpenAI diarization of long media requires ffmpeg to split it");
+  }
+
+  const chunkRoot = await fs.mkdtemp(join(tmpdir(), "summarize-diarize-openai-chunks-"));
+  const chunkDurationSeconds =
+    totalDurationSeconds === null
+      ? OPENAI_DIARIZATION_CHUNK_SECONDS
+      : resolveOpenAiDiarizationChunkSeconds(totalDurationSeconds);
+  try {
+    await runFfmpegSegment({
+      inputPath: filePath,
+      outputPattern: join(chunkRoot, "chunk-%05d.mp3"),
+      segmentSeconds: chunkDurationSeconds,
+    });
+    const chunkPaths = (await fs.readdir(chunkRoot))
+      .filter((name) => name.endsWith(".mp3"))
+      .sort()
+      .map((name) => join(chunkRoot, name));
+    if (chunkPaths.length === 0) throw new Error("ffmpeg produced no OpenAI diarization chunks");
+    let completedChunks = 0;
+    const chunkResults = await mapWithConcurrency(
+      chunkPaths,
+      OPENAI_DIARIZATION_CHUNK_CONCURRENCY,
+      async (chunkPath, chunkIndex) => {
+        const result = await transcribeOpenAiChunkWithRetry({
+          chunkPath,
+          apiKey,
+          env,
+        });
+        completedChunks += 1;
+        onProgress?.({
+          partIndex: completedChunks,
+          parts: chunkPaths.length,
+          processedDurationSeconds:
+            totalDurationSeconds === null
+              ? null
+              : Math.min(completedChunks * chunkDurationSeconds, totalDurationSeconds),
+          totalDurationSeconds,
+        });
+        return { chunkIndex, result };
+      },
+    );
+
+    const segments = chunkResults
+      .flatMap(({ chunkIndex, result }) => {
+        return namespaceOpenAiChunkSegments(
+          result.segments ?? [],
+          chunkIndex,
+          chunkDurationSeconds,
+        );
+      })
+      .sort((left, right) => left.startMs - right.startMs);
+    const text = formatDiarizedTranscript(segments);
+    if (!text) throw new Error("OpenAI transcription returned no speaker-labelled segments");
+    return {
+      text,
+      provider: "openai",
+      error: null,
+      notes: [
+        `OpenAI diarization: split long media into ${chunkPaths.length} chunks of up to 8 minutes`,
+      ],
+      segments,
+    };
+  } finally {
+    await fs.rm(chunkRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function transcribeOpenAiChunkWithRetry({
+  chunkPath,
+  apiKey,
+  env,
+}: {
+  chunkPath: string;
+  apiKey: string;
+  env: Record<string, string | undefined>;
+}): Promise<WhisperTranscriptionResult> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= OPENAI_DIARIZATION_CHUNK_ATTEMPTS; attempt += 1) {
+    try {
+      return await transcribeFileWithOpenAiDiarization({
+        filePath: chunkPath,
+        mediaType: "audio/mpeg",
+        filename: basename(chunkPath),
+        apiKey,
+        options: { env, allowEmpty: true },
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt === OPENAI_DIARIZATION_CHUNK_ATTEMPTS || !isRetryableOpenAiError(error)) {
+        throw error;
+      }
+      const retryAfterMs =
+        error instanceof OpenAiTranscriptionHttpError ? error.retryAfterMs : null;
+      const delayMs = (retryAfterMs ?? attempt * 10_000) + Math.floor(Math.random() * 1_000);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
+}
+
+export function isRetryableOpenAiError(error: unknown): boolean {
+  if (error instanceof OpenAiTranscriptionHttpError) {
+    return (
+      error.status === 408 || error.status === 409 || error.status === 429 || error.status >= 500
+    );
+  }
+  if (error instanceof DOMException) {
+    return ["AbortError", "NetworkError", "TimeoutError"].includes(error.name);
+  }
+  if (!(error instanceof TypeError)) return false;
+  if (/fetch|network|socket|connection|terminated/i.test(error.message)) return true;
+  const causeCode =
+    error.cause && typeof error.cause === "object" && "code" in error.cause
+      ? String(error.cause.code)
+      : "";
+  return new Set([
+    "EAI_AGAIN",
+    "ECONNRESET",
+    "ENETUNREACH",
+    "ENOTFOUND",
+    "EPIPE",
+    "ETIMEDOUT",
+    "UND_ERR_CONNECT_TIMEOUT",
+    "UND_ERR_HEADERS_TIMEOUT",
+    "UND_ERR_SOCKET",
+  ]).has(causeCode);
+}
+
+export function resolveOpenAiDiarizationChunkSeconds(totalDurationSeconds: number): number {
+  const chunkCount = Math.ceil(totalDurationSeconds / OPENAI_DIARIZATION_CHUNK_SECONDS);
+  return Math.ceil(totalDurationSeconds / Math.max(1, chunkCount));
+}
+
+function namespaceOpenAiChunkSegments(
+  segments: TranscriptionSegment[],
+  chunkIndex: number,
+  chunkDurationSeconds: number,
+): TranscriptionSegment[] {
+  const speakerOrdinals = new Map<string, number>();
+  const offsetMs = chunkIndex * chunkDurationSeconds * 1_000;
+  return segments.map((segment) => {
+    if (!segment.speaker) throw new Error("OpenAI diarization segment has no speaker label");
+    let ordinal = speakerOrdinals.get(segment.speaker);
+    if (ordinal === undefined) {
+      ordinal = speakerOrdinals.size + 1;
+      speakerOrdinals.set(segment.speaker, ordinal);
+    }
+    return {
+      ...segment,
+      startMs: segment.startMs + offsetMs,
+      endMs: segment.endMs == null ? null : segment.endMs + offsetMs,
+      speaker: `Speaker ${chunkIndex * 1_000 + ordinal}`,
+    };
+  });
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  callback: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  let firstError: unknown = null;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+      while (nextIndex < values.length && firstError === null) {
+        const index = nextIndex;
+        nextIndex += 1;
+        try {
+          results[index] = await callback(values[index]!, index);
+        } catch (error) {
+          firstError ??= error;
+        }
+      }
+    }),
+  );
+  if (firstError !== null) throw firstError;
+  return results;
 }
 
 export async function transcribeMediaBytesWithDiarization({
@@ -186,10 +448,12 @@ async function prepareOpenAiDiarizationFile({
   filePath,
   mediaType,
   filename,
+  totalDurationSeconds,
 }: {
   filePath: string;
   mediaType: string;
   filename: string | null;
+  totalDurationSeconds: number | null;
 }): Promise<{
   filePath: string;
   mediaType: string;
@@ -208,12 +472,13 @@ async function prepareOpenAiDiarizationFile({
   }
 
   const compressedPath = join(tmpdir(), `summarize-diarize-openai-${randomUUID()}.mp3`);
+  const bitrateKbps = resolveOpenAiDiarizationBitrateKbps(totalDurationSeconds);
   let handedOff = false;
   try {
     await runFfmpegTranscodeToMp3({
       inputPath: filePath,
       outputPath: compressedPath,
-      bitrateKbps: 24,
+      bitrateKbps,
     });
     const compressedStat = await fs.stat(compressedPath);
     if (compressedStat.size > MAX_OPENAI_UPLOAD_BYTES) {
@@ -225,9 +490,23 @@ async function prepareOpenAiDiarizationFile({
       mediaType: "audio/mpeg",
       filename: "audio.mp3",
       cleanupPath: compressedPath,
-      note: "OpenAI diarization: compressed oversized media to 24 kbps MP3",
+      note: `OpenAI diarization: compressed oversized media to ${bitrateKbps} kbps MP3`,
     };
   } finally {
     if (!handedOff) await fs.unlink(compressedPath).catch(() => {});
   }
+}
+
+export function resolveOpenAiDiarizationBitrateKbps(
+  totalDurationSeconds: number | null,
+): 8 | 12 | 16 | 24 {
+  if (
+    !Number.isFinite(totalDurationSeconds) ||
+    totalDurationSeconds === null ||
+    totalDurationSeconds <= 0
+  ) {
+    return 24;
+  }
+  const targetKbps = ((MAX_OPENAI_UPLOAD_BYTES * 8) / (totalDurationSeconds * 1_000)) * 0.95;
+  return ([24, 16, 12, 8] as const).find((bitrate) => bitrate <= targetKbps) ?? 8;
 }
