@@ -19,12 +19,16 @@ type ElevenLabsPayload = {
   words?: unknown;
 };
 
+type UndiciDispatcher = {
+  dispatch: (options: Record<string, unknown>, handler: unknown) => boolean;
+};
+
 export async function transcribeFileWithElevenLabsDiarization({
   filePath,
   mediaType,
   filename,
   apiKey,
-  fetchImpl = globalThis.fetch,
+  fetchImpl,
   baseUrl = ELEVENLABS_TRANSCRIPTION_URL,
 }: {
   filePath: string;
@@ -42,12 +46,18 @@ export async function transcribeFileWithElevenLabsDiarization({
   form.append("timestamps_granularity", "word");
   form.append("tag_audio_events", "false");
 
-  const response = await fetchImpl(baseUrl, {
+  const requestFetch = fetchImpl ?? globalThis.fetch;
+  const requestInit: RequestInit & { dispatcher?: UndiciDispatcher } = {
     method: "POST",
     headers: { "xi-api-key": apiKey },
     body: form,
     signal: AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS),
-  });
+  };
+  const isBunRuntime = typeof (process.versions as { bun?: string }).bun === "string";
+  const dispatcher = fetchImpl || isBunRuntime ? null : createLongRunningFetchDispatcher();
+  if (dispatcher) requestInit.dispatcher = dispatcher;
+
+  const response = await requestFetch(baseUrl, requestInit);
   if (!response.ok) {
     const detail = await readErrorDetail(response);
     const suffix = detail ? `: ${detail}` : "";
@@ -61,6 +71,32 @@ export async function transcribeFileWithElevenLabsDiarization({
     throw new Error("ElevenLabs transcription returned no speaker-labelled segments");
   }
   return { text, provider: "elevenlabs", error: null, notes: [], segments };
+}
+
+function createLongRunningFetchDispatcher(): UndiciDispatcher | null {
+  if (!process.versions.undici) return null;
+
+  return {
+    dispatch(options, handler) {
+      // Native fetch exposes no public getter for its configured proxy/TLS dispatcher.
+      const usesDispatcherV2 =
+        typeof (handler as { onRequestStart?: unknown } | null)?.onRequestStart === "function";
+      const symbol = Symbol.for(`undici.globalDispatcher.${usesDispatcherV2 ? 2 : 1}`);
+      const configured = Reflect.get(globalThis, symbol) as UndiciDispatcher | undefined;
+      if (!configured || typeof configured.dispatch !== "function") {
+        throw new Error("Node fetch dispatcher is unavailable");
+      }
+      return configured.dispatch(
+        {
+          ...options,
+          // Let the request's ten-minute AbortSignal govern long ElevenLabs processing.
+          headersTimeout: 0,
+          bodyTimeout: 0,
+        },
+        handler,
+      );
+    },
+  };
 }
 
 export function parseElevenLabsDiarizedSegments(words: unknown): TranscriptionSegment[] {

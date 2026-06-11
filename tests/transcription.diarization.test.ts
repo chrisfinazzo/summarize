@@ -1,7 +1,8 @@
 import { access, mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_OPENAI_UPLOAD_BYTES } from "../packages/core/src/transcription/whisper/constants.js";
 import {
   buildDiarizationModelChain,
@@ -29,6 +30,10 @@ vi.mock("../packages/core/src/transcription/whisper/ffmpeg.js", async (importOri
 });
 
 describe("transcription diarization", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("prefers ElevenLabs and falls back to OpenAI in auto mode", () => {
     const providers = resolveDiarizationProviderOrder({
       preference: "auto",
@@ -77,6 +82,7 @@ describe("transcription diarization", () => {
       expect(form.get("diarize")).toBe("true");
       expect(form.get("timestamps_granularity")).toBe("word");
       expect(init?.headers).toEqual({ "xi-api-key": "ELEVEN" });
+      expect(Object.hasOwn(init ?? {}, "dispatcher")).toBe(false);
       return new Response(
         JSON.stringify({
           words: [
@@ -99,6 +105,117 @@ describe("transcription diarization", () => {
       expect(result.provider).toBe("elevenlabs");
       expect(result.text).toBe("Speaker 1: Hello\nSpeaker 2: Hi");
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("extends native fetch timeouts through the configured dispatcher", async () => {
+    const root = await mkdtemp(join(tmpdir(), "summarize-elevenlabs-timeout-"));
+    const filePath = join(root, "audio.mp3");
+    await writeFile(filePath, new Uint8Array([1, 2, 3]));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      return new Response(
+        JSON.stringify({
+          words: [{ text: "Hello", start: 0, end: 0.5, speaker_id: "speaker_1" }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    const dispatcherV1Symbol = Symbol.for("undici.globalDispatcher.1");
+    const dispatcherV2Symbol = Symbol.for("undici.globalDispatcher.2");
+    const originalV1 = Object.getOwnPropertyDescriptor(globalThis, dispatcherV1Symbol);
+    const originalV2 = Object.getOwnPropertyDescriptor(globalThis, dispatcherV2Symbol);
+    const dispatchV1 = vi.fn(() => true);
+    const dispatchV2 = vi.fn(() => true);
+    const configuredV1 = { dispatch: dispatchV1 };
+    const configuredV2 = { dispatch: dispatchV2 };
+    Reflect.set(globalThis, dispatcherV1Symbol, configuredV1);
+    Reflect.set(globalThis, dispatcherV2Symbol, configuredV2);
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const result = await transcribeFileWithElevenLabsDiarization({
+        filePath,
+        mediaType: "audio/mpeg",
+        filename: "audio.mp3",
+        apiKey: "ELEVEN",
+      });
+
+      expect(result.provider).toBe("elevenlabs");
+      const requestInit = fetchMock.mock.calls[0]?.[1] as
+        | (RequestInit & {
+            dispatcher?: {
+              dispatch: (options: Record<string, unknown>, handler: unknown) => boolean;
+            };
+          })
+        | undefined;
+      const dispatcher = requestInit?.dispatcher;
+      expect(dispatcher).toBeDefined();
+      expect(requestInit?.signal).toBeInstanceOf(AbortSignal);
+
+      const handlerV1 = { onConnect: vi.fn() };
+      const handlerV2 = { onRequestStart: vi.fn() };
+      expect(dispatcher?.dispatch({ path: "/v1", headersTimeout: 300_000 }, handlerV1)).toBe(true);
+      expect(dispatcher?.dispatch({ path: "/v2", bodyTimeout: 300_000 }, handlerV2)).toBe(true);
+      expect(dispatchV1).toHaveBeenCalledWith(
+        { path: "/v1", headersTimeout: 0, bodyTimeout: 0 },
+        handlerV1,
+      );
+      expect(dispatchV2).toHaveBeenCalledWith(
+        { path: "/v2", headersTimeout: 0, bodyTimeout: 0 },
+        handlerV2,
+      );
+      expect(Reflect.get(globalThis, dispatcherV1Symbol)).toBe(configuredV1);
+      expect(Reflect.get(globalThis, dispatcherV2Symbol)).toBe(configuredV2);
+    } finally {
+      vi.unstubAllGlobals();
+      restoreGlobalProperty(dispatcherV1Symbol, originalV1);
+      restoreGlobalProperty(dispatcherV2Symbol, originalV2);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the Node native dispatcher contract for default ElevenLabs requests", async () => {
+    const root = await mkdtemp(join(tmpdir(), "summarize-elevenlabs-native-fetch-"));
+    const filePath = join(root, "audio.mp3");
+    await writeFile(filePath, new Uint8Array([1, 2, 3]));
+    const server = createServer((request, response) => {
+      request.resume();
+      request.once("end", () => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            words: [{ text: "Hello", start: 0, end: 0.5, speaker_id: "speaker_1" }],
+          }),
+        );
+      });
+    });
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("test server has no TCP port");
+
+      const result = await transcribeFileWithElevenLabsDiarization({
+        filePath,
+        mediaType: "audio/mpeg",
+        filename: "audio.mp3",
+        apiKey: "ELEVEN",
+        baseUrl: `http://127.0.0.1:${address.port}/speech-to-text`,
+      });
+
+      expect(result.provider).toBe("elevenlabs");
+      expect(result.text).toBe("Speaker 1: Hello");
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) {
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      }
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -169,3 +286,11 @@ describe("transcription diarization", () => {
     }
   });
 });
+
+function restoreGlobalProperty(symbol: symbol, descriptor: PropertyDescriptor | undefined): void {
+  if (descriptor) {
+    Object.defineProperty(globalThis, symbol, descriptor);
+  } else {
+    Reflect.deleteProperty(globalThis, symbol);
+  }
+}
