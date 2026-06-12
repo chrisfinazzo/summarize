@@ -2,12 +2,11 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
-import { spawnTracked } from "../../../../processes.js";
 import {
   probeMediaDurationSecondsWithFfprobe,
   type DiarizationPreference,
-  type TranscriptionSegment,
   type TranscriptionProvider,
+  type TranscriptionSegment,
   transcribeMediaFileWithWhisper,
 } from "../../../../transcription/whisper.js";
 import { buildMissingTranscriptionProviderMessage } from "../../../../transcription/whisper/provider-setup.js";
@@ -20,9 +19,15 @@ import {
   type TranscriptionConfig,
 } from "../../transcription-config.js";
 import { resolveTranscriptionStartInfo } from "../transcription-start.js";
+import { runYtDlpDownload } from "./yt-dlp-process.js";
 
-const YT_DLP_TIMEOUT_MS = 300_000;
-const MAX_STDERR_BYTES = 8192;
+export {
+  buildYtDlpDownloadArgs,
+  fetchDurationSecondsWithYtDlp,
+  fetchMediaMetadataWithYtDlp,
+  type YtDlpMediaMetadata,
+} from "./yt-dlp-process.js";
+
 const DEFAULT_AUDIO_FORMAT =
   "bestaudio[vcodec=none]/best[height<=360]/best[height<=480]/best[height<=720]/best";
 const DEFAULT_SHARED_VIDEO_FORMAT =
@@ -54,17 +59,6 @@ type YtDlpRequest = {
   mediaKind?: "video" | "audio" | null;
   mediaCache?: MediaCache | null;
   extraArgs?: string[];
-};
-
-type YtDlpDurationRequest = {
-  ytDlpPath: string | null;
-  url: string;
-  timeoutMs?: number;
-};
-
-export type YtDlpMediaMetadata = {
-  durationSeconds: number | null;
-  viewCount: number | null;
 };
 
 export const fetchTranscriptWithYtDlp = async ({
@@ -316,80 +310,6 @@ export const fetchTranscriptWithYtDlp = async ({
   }
 };
 
-export const fetchMediaMetadataWithYtDlp = async ({
-  ytDlpPath,
-  url,
-  timeoutMs = 30_000,
-}: YtDlpDurationRequest): Promise<YtDlpMediaMetadata | null> => {
-  if (!ytDlpPath) return null;
-
-  return new Promise((resolve) => {
-    const args = ["--skip-download", "--dump-json", "--no-playlist", "--no-warnings", url];
-    const { proc } = spawnTracked(ytDlpPath, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      label: "yt-dlp",
-      kind: "yt-dlp",
-    });
-    let stdout = "";
-    let stderr = "";
-
-    const timeout = setTimeout(
-      () => {
-        proc.kill("SIGKILL");
-        resolve(null);
-      },
-      Math.max(1, Math.min(timeoutMs, 30_000)),
-    );
-
-    proc.stdout?.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-
-    proc.stderr?.on("data", (chunk) => {
-      stderr += chunk.toString();
-      if (stderr.length > MAX_STDERR_BYTES) {
-        stderr = stderr.slice(-MAX_STDERR_BYTES);
-      }
-    });
-
-    proc.on("close", (code) => {
-      clearTimeout(timeout);
-      if (code !== 0) {
-        resolve(null);
-        return;
-      }
-      const jsonLine = stdout
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .find((line) => line.startsWith("{"));
-      if (!jsonLine) {
-        resolve(null);
-        return;
-      }
-      try {
-        const parsed = JSON.parse(jsonLine) as { duration?: unknown; view_count?: unknown };
-        const duration = typeof parsed.duration === "number" ? parsed.duration : Number.NaN;
-        const viewCount = typeof parsed.view_count === "number" ? parsed.view_count : Number.NaN;
-        resolve({
-          durationSeconds: Number.isFinite(duration) && duration > 0 ? duration : null,
-          viewCount: Number.isSafeInteger(viewCount) && viewCount >= 0 ? viewCount : null,
-        });
-      } catch {
-        resolve(null);
-      }
-    });
-
-    proc.on("error", () => {
-      clearTimeout(timeout);
-      resolve(null);
-    });
-  });
-};
-
-export const fetchDurationSecondsWithYtDlp = async (
-  request: YtDlpDurationRequest,
-): Promise<number | null> => (await fetchMediaMetadataWithYtDlp(request))?.durationSeconds ?? null;
-
 async function downloadAudio(
   ytDlpPath: string,
   url: string,
@@ -492,160 +412,6 @@ async function downloadSlidesVideoAndAudio(
   }
 }
 
-async function runYtDlpDownload({
-  ytDlpPath,
-  url,
-  output,
-  format,
-  extractAudio,
-  extraArgs,
-  onProgress,
-}: {
-  ytDlpPath: string;
-  url: string;
-  output: string;
-  format: string;
-  extractAudio: boolean;
-  extraArgs?: string[];
-  onProgress?: ((downloadedBytes: number, totalBytes: number | null) => void) | null;
-}): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const args = buildYtDlpDownloadArgs({
-      url,
-      output,
-      format,
-      extractAudio,
-      extraArgs,
-      progress: Boolean(onProgress),
-    });
-
-    const { proc, handle } = spawnTracked(ytDlpPath, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      label: "yt-dlp",
-      kind: "yt-dlp",
-    });
-    let stderr = "";
-    let progressBuffer = "";
-    let lastTotalBytes: number | null = null;
-
-    const reportProgress = (downloadedBytes: number, totalBytes: number | null): void => {
-      if (!onProgress) return;
-      let normalizedTotal = totalBytes;
-      if (typeof normalizedTotal === "number" && Number.isFinite(normalizedTotal)) {
-        if (normalizedTotal > 0) {
-          if (lastTotalBytes === null || normalizedTotal > lastTotalBytes) {
-            lastTotalBytes = normalizedTotal;
-          } else if (normalizedTotal < lastTotalBytes) {
-            normalizedTotal = lastTotalBytes;
-          }
-        }
-      } else if (lastTotalBytes !== null) {
-        normalizedTotal = lastTotalBytes;
-      }
-      onProgress(downloadedBytes, normalizedTotal);
-      if (normalizedTotal && normalizedTotal > 0) {
-        const pct = Math.max(
-          0,
-          Math.min(100, Math.round((downloadedBytes / normalizedTotal) * 100)),
-        );
-        handle?.setProgress(pct, "download");
-      }
-    };
-
-    const handleProgressChunk = (chunk: string) => {
-      if (!onProgress) return;
-      progressBuffer += chunk;
-      const lines = progressBuffer.split(/\r?\n/);
-      progressBuffer = lines.pop() ?? "";
-      for (const line of lines) {
-        emitProgressFromLine(line, reportProgress);
-      }
-    };
-
-    if (proc.stdout) {
-      proc.stdout.setEncoding("utf8");
-      proc.stdout.on("data", (chunk: string) => {
-        handleProgressChunk(chunk);
-      });
-    }
-
-    if (proc.stderr) {
-      proc.stderr.setEncoding("utf8");
-      proc.stderr.on("data", (chunk: string) => {
-        if (stderr.length < MAX_STDERR_BYTES) {
-          const remaining = MAX_STDERR_BYTES - stderr.length;
-          stderr += chunk.slice(0, remaining);
-        }
-        handleProgressChunk(chunk);
-      });
-    }
-
-    const timeout = setTimeout(() => {
-      proc.kill("SIGTERM");
-      reject(new Error("yt-dlp download timeout"));
-    }, YT_DLP_TIMEOUT_MS);
-
-    proc.on("close", (code, signal) => {
-      if (onProgress && progressBuffer.trim().length > 0) {
-        emitProgressFromLine(progressBuffer, reportProgress);
-      }
-      clearTimeout(timeout);
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      const detail = stderr.trim();
-      const suffix = detail ? `: ${detail}` : "";
-      if (code === null) {
-        reject(new Error(`yt-dlp terminated (${signal ?? "unknown"})${suffix}`));
-        return;
-      }
-      reject(new Error(`yt-dlp exited with code ${code}${suffix}`));
-    });
-
-    proc.on("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-  });
-}
-
-export function buildYtDlpDownloadArgs({
-  url,
-  output,
-  format,
-  extractAudio,
-  extraArgs,
-  progress,
-}: {
-  url: string;
-  output: string;
-  format: string;
-  extractAudio: boolean;
-  extraArgs?: string[];
-  progress: boolean;
-}): string[] {
-  const progressTemplate =
-    "progress:%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s";
-  return [
-    "-f",
-    format,
-    ...(extractAudio ? ["-x", "--audio-format", "mp3"] : []),
-    "--concurrent-fragments",
-    "4",
-    "--no-playlist",
-    "--retries",
-    "3",
-    "--no-warnings",
-    ...(url.startsWith("file://") ? ["--enable-file-urls"] : []),
-    ...(progress ? ["--progress", "--newline", "--progress-template", progressTemplate] : []),
-    ...(extraArgs?.length ? extraArgs : []),
-    "-o",
-    output,
-    url,
-  ];
-}
-
 function inferMediaType(value: string, kind: "audio" | "video"): string | null {
   switch (extname(value).toLowerCase()) {
     case ".mp3":
@@ -663,27 +429,6 @@ function inferMediaType(value: string, kind: "audio" | "video"): string | null {
     default:
       return null;
   }
-}
-
-function emitProgressFromLine(
-  line: string,
-  onProgress: (downloadedBytes: number, totalBytes: number | null) => void,
-): void {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith("progress:")) return;
-  const payload = trimmed.slice("progress:".length);
-  const [downloadedRaw, totalRaw, estimateRaw] = payload.split("|");
-  const downloaded = Number.parseFloat(downloadedRaw);
-  if (!Number.isFinite(downloaded) || downloaded < 0) return;
-  const totalCandidate = Number.parseFloat(totalRaw);
-  const estimateCandidate = Number.parseFloat(estimateRaw);
-  const totalBytes =
-    Number.isFinite(totalCandidate) && totalCandidate > 0
-      ? totalCandidate
-      : Number.isFinite(estimateCandidate) && estimateCandidate > 0
-        ? estimateCandidate
-        : null;
-  onProgress(downloaded, totalBytes);
 }
 
 function wrapError(prefix: string, error: unknown): Error {
