@@ -2,7 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { createTempFileFromStdin } from "../src/run/stdin-temp-file.js";
+import { createTempFileFromStdin } from "../src/application/stdin-input.js";
 
 const streamFrom = (...chunks: Array<string | Uint8Array | Buffer>) => Readable.from(chunks);
 

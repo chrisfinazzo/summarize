@@ -1,7 +1,10 @@
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { isYouTubeUrl } from "../content/index.js";
 import type { ExtractedLinkContent } from "../content/index.js";
 import { buildUrlPrompt } from "../engine/web-prompt.js";
 import { resolveUrlSummaryExecution, type UrlSummaryResolution } from "../engine/web-summary.js";
+import { MAX_PDF_EXTRACT_BYTES } from "../run/constants.js";
 import { extractAssetContent } from "../run/flows/asset/extract.js";
 import { executeMediaFile } from "../run/flows/asset/media.js";
 import { executeAssetSummary } from "../run/flows/asset/summary.js";
@@ -15,6 +18,12 @@ import {
   bindSummarizeExecutionEvents,
   type PreparedSummarizeExecution,
 } from "./execution-resources.js";
+import {
+  acquireLocalAssetInput,
+  isPdfAssetPath,
+  isTranscribableAssetPath,
+} from "./input-acquisition.js";
+import { createTempFileFromStdin } from "./stdin-input.js";
 import type {
   AssetExecutionInput,
   AssetExtractionExecutionResult,
@@ -22,6 +31,7 @@ import type {
   AssetSummaryExecutionResult,
   ExtractionResult,
   SummarizeEvent,
+  SummarizeEventInput,
   SummarizeEventSink,
   SummarizeRequest,
   SummarizeResult,
@@ -33,7 +43,7 @@ import {
   type SummarizeExecutionDetails,
   type SummarizeExtractionDetails,
 } from "./url-result.js";
-import { createSummarizeUrlFlowContext } from "./url-runtime.js";
+import { createSummarizeRuntimeResources } from "./url-runtime.js";
 
 const ignoreEvent: SummarizeEventSink = () => {};
 
@@ -173,6 +183,19 @@ function toAssetExecutionInput(
   };
 }
 
+function toEventInput(input: SummarizeRequest["input"]): SummarizeEventInput {
+  if (input.kind === "resolved-asset" || input.kind === "resolved-media") {
+    return {
+      kind: input.kind,
+      sourceKind: input.sourceKind,
+      sourceLabel: input.sourceLabel,
+      mediaType: input.attachment.mediaType,
+      filename: input.attachment.filename,
+    };
+  }
+  return input;
+}
+
 export async function executeSummarize(
   request: SummarizeRequest,
   runtime: SummarizeRuntime,
@@ -189,6 +212,7 @@ export async function executeSummarize(
   let slides: ExtractionResult["slides"] = null;
   let summaryDetails: SummarizeExecutionDetails = { kind: "visible-page" };
   let extractionDetails: SummarizeExtractionDetails | null = null;
+  let cleanupStdin: (() => Promise<void>) | null = null;
 
   const emit = (event: SummarizeEvent) => {
     if (event.type === "model-selected") {
@@ -211,22 +235,88 @@ export async function executeSummarize(
   emit({
     type: "run-started",
     runId: runtime.runId,
-    input:
-      request.input.kind === "resolved-asset" || request.input.kind === "resolved-media"
-        ? {
-            kind: request.input.kind,
-            sourceKind: request.input.sourceKind,
-            sourceLabel: request.input.sourceLabel,
-            mediaType: request.input.attachment.mediaType,
-            filename: request.input.attachment.filename,
-          }
-        : request.input,
+    input: toEventInput(request.input),
   });
 
   try {
-    const boundPrepared = prepared ? bindSummarizeExecutionEvents(prepared, emit) : null;
-    if (request.input.kind === "resolved-media") {
-      const assetSummaryContext = boundPrepared?.assetSummaryContext;
+    let executionInput = request.input;
+    if (executionInput.kind === "stdin") {
+      if (request.extractOnly) {
+        throw new Error("--extract is not supported for piped stdin input");
+      }
+      const stdin = runtime.stdin;
+      if (!stdin) {
+        throw new Error("Stdin execution requires a readable input stream");
+      }
+      const temp = await createTempFileFromStdin({ stream: stdin });
+      cleanupStdin = temp.cleanup;
+      executionInput = { kind: "file", filePath: temp.filePath };
+    }
+
+    if (executionInput.kind === "file") {
+      if (
+        request.extractOnly &&
+        !isTranscribableAssetPath(executionInput.filePath) &&
+        !isPdfAssetPath(executionInput.filePath)
+      ) {
+        throw new Error(
+          "--extract for local files is only supported for media files (MP3, MP4, WAV, etc.) and PDF files",
+        );
+      }
+      if (request.slides && isTranscribableAssetPath(executionInput.filePath)) {
+        executionInput = {
+          kind: "url",
+          url: pathToFileURL(executionInput.filePath).href,
+          title: null,
+          maxCharacters: null,
+        };
+      } else {
+        emit({
+          type: "input-progress",
+          phase: "loading",
+          source: executionInput.filePath,
+          filename: path.basename(executionInput.filePath),
+          mediaType: null,
+          sizeBytes: null,
+        });
+        const acquired = await acquireLocalAssetInput({
+          filePath: executionInput.filePath,
+          ...(request.extractOnly && isPdfAssetPath(executionInput.filePath)
+            ? { maxBytes: MAX_PDF_EXTRACT_BYTES }
+            : {}),
+        });
+        emit({
+          type: "input-progress",
+          phase:
+            acquired.kind === "resolved-media"
+              ? "transcribing"
+              : request.extractOnly
+                ? "extracting"
+                : "summarizing",
+          source: acquired.sourceLabel,
+          filename: acquired.attachment.filename,
+          mediaType: acquired.attachment.mediaType,
+          sizeBytes: acquired.sizeBytes,
+        });
+        executionInput = acquired;
+      }
+    }
+    if (executionInput.kind === "file" || executionInput.kind === "stdin") {
+      throw new Error("Internal error: raw input was not resolved");
+    }
+
+    const executionRequest =
+      executionInput === request.input ? request : { ...request, input: executionInput };
+    const boundPrepared = prepared
+      ? bindSummarizeExecutionEvents(prepared, emit)
+      : createSummarizeRuntimeResources({
+          request: executionRequest,
+          runtime,
+          runStartedAtMs: startedAt,
+          emit,
+        });
+    if (executionInput.kind === "resolved-media") {
+      const assetSummaryContext = boundPrepared.assetSummaryContext;
       if (!assetSummaryContext) {
         throw new Error("Resolved media execution requires prepared asset resources");
       }
@@ -234,9 +324,9 @@ export async function executeSummarize(
         emit({ type: "summary-started" });
       }
       const mediaResult = await executeMediaFile(assetSummaryContext, {
-        sourceKind: request.input.sourceKind,
-        sourceLabel: request.input.sourceLabel,
-        attachment: request.input.attachment,
+        sourceKind: executionInput.sourceKind,
+        sourceLabel: executionInput.sourceLabel,
+        attachment: executionInput.attachment,
         onModelChosen: (modelId) => emit({ type: "model-selected", modelId }),
       });
       if (mediaResult.kind === "summary") {
@@ -248,7 +338,7 @@ export async function executeSummarize(
         mediaResult.kind === "summary" ? await assetSummaryContext.buildReport() : null;
       const result: AssetMediaExecutionResult = {
         kind: "asset-media",
-        input: toAssetExecutionInput(request.input),
+        input: toAssetExecutionInput(executionInput),
         usedModel:
           usedModel ??
           (mediaResult.kind === "summary" ? (mediaResult.summary.llm?.model ?? null) : null),
@@ -264,8 +354,8 @@ export async function executeSummarize(
       return result;
     }
 
-    if (request.input.kind === "resolved-asset") {
-      const assetSummaryContext = boundPrepared?.assetSummaryContext;
+    if (executionInput.kind === "resolved-asset") {
+      const assetSummaryContext = boundPrepared.assetSummaryContext;
       if (!assetSummaryContext) {
         throw new Error("Resolved asset execution requires prepared asset resources");
       }
@@ -278,14 +368,14 @@ export async function executeSummarize(
             timeoutMs: assetSummaryContext.timeoutMs,
             preprocessMode: assetSummaryContext.preprocessMode,
           },
-          attachment: request.input.attachment,
+          attachment: executionInput.attachment,
         });
         const report = assetSummaryContext.shouldComputeReport
           ? await assetSummaryContext.buildReport()
           : null;
         const result: AssetExtractionExecutionResult = {
           kind: "asset-extraction",
-          input: toAssetExecutionInput(request.input),
+          input: toAssetExecutionInput(executionInput),
           extracted: extractedAsset,
           elapsedMs: now() - startedAt,
           report,
@@ -299,9 +389,9 @@ export async function executeSummarize(
       }
       emit({ type: "summary-started" });
       const assetResult = await executeAssetSummary(assetSummaryContext, {
-        sourceKind: request.input.sourceKind,
-        sourceLabel: request.input.sourceLabel,
-        attachment: request.input.attachment,
+        sourceKind: executionInput.sourceKind,
+        sourceLabel: executionInput.sourceLabel,
+        attachment: executionInput.attachment,
         onModelChosen: (modelId) => emit({ type: "model-selected", modelId }),
       });
       if (!assetResult.summaryEmitted) {
@@ -309,7 +399,7 @@ export async function executeSummarize(
       }
       const result: AssetSummaryExecutionResult = {
         kind: "asset-summary",
-        input: toAssetExecutionInput(request.input),
+        input: toAssetExecutionInput(executionInput),
         summary: assetResult.summary,
         usedModel: usedModel ?? assetResult.llm?.model ?? null,
         summaryFromCache: assetResult.summaryFromCache,
@@ -322,23 +412,16 @@ export async function executeSummarize(
       return result;
     }
 
-    if (request.extractOnly && request.input.kind !== "url") {
+    if (request.extractOnly && executionInput.kind !== "url") {
       throw new Error("Extract-only execution requires a URL input");
     }
 
-    const ctx = boundPrepared
-      ? boundPrepared.urlFlowContext
-      : createSummarizeUrlFlowContext({
-          request,
-          runtime,
-          runStartedAtMs: startedAt,
-          emit,
-        });
+    const ctx = boundPrepared.urlFlowContext;
 
-    if (request.input.kind === "visible-page") {
+    if (executionInput.kind === "visible-page") {
       const visiblePageResult = await executeVisiblePageSummary({
         ctx,
-        input: request.input,
+        input: executionInput,
         cacheMode: runtime.cache.mode,
       });
       extracted = visiblePageResult.extracted;
@@ -348,11 +431,11 @@ export async function executeSummarize(
         emit,
       });
     } else {
-      emit({ type: "extraction-started", url: request.input.url });
+      emit({ type: "extraction-started", url: executionInput.url });
       const urlResult = await executeUrlFlow({
         ctx,
-        url: request.input.url,
-        isYoutubeUrl: prepared?.isYoutubeUrl ?? isYouTubeUrl(request.input.url),
+        url: executionInput.url,
+        isYoutubeUrl: prepared?.isYoutubeUrl ?? isYouTubeUrl(executionInput.url),
       });
       extracted = urlResult.extracted;
       if (!slides) slides = urlResult.slides;
@@ -401,7 +484,7 @@ export async function executeSummarize(
       }
       const result: ExtractionResult = {
         kind: "extraction",
-        input: request.input as Extract<SummarizeRequest["input"], { kind: "url" }>,
+        input: executionInput as Extract<SummarizeRequest["input"], { kind: "url" }>,
         extracted,
         slides,
         details: extractionDetails,
@@ -412,7 +495,7 @@ export async function executeSummarize(
 
     const result: SummaryResult = {
       kind: "summary",
-      input: request.input,
+      input: executionInput,
       summary: normalizedSummary ?? summaryText.replace(/\n$/, ""),
       usedModel: usedModel ?? ctx.model.requestedModelLabel,
       extracted,
@@ -428,5 +511,7 @@ export async function executeSummarize(
   } catch (error) {
     emit({ type: "run-failed", error: error instanceof Error ? error.message : String(error) });
     throw error;
+  } finally {
+    await cleanupStdin?.();
   }
 }

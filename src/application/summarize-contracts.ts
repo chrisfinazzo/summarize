@@ -21,6 +21,13 @@ import type { SummarizeExecutionDetails, SummarizeExtractionDetails } from "./ur
 
 export type SummarizeInput =
   | {
+      kind: "file";
+      filePath: string;
+    }
+  | {
+      kind: "stdin";
+    }
+  | {
       kind: "visible-page";
       url: string;
       title: string | null;
@@ -66,11 +73,20 @@ export type SummarizeRuntime = {
   execFile: ExecFileFn;
   cache: CacheState;
   mediaCache: MediaCache | null;
+  stdin?: NodeJS.ReadableStream | null;
   now?: (() => number) | null;
 };
 
 export type SummarizeEvent =
   | { type: "run-started"; runId: string; input: SummarizeEventInput }
+  | {
+      type: "input-progress";
+      phase: "loading" | "summarizing" | "extracting" | "transcribing";
+      source: string;
+      filename: string | null;
+      mediaType: string | null;
+      sizeBytes: number | null;
+    }
   | { type: "extraction-started"; url: string }
   | { type: "extraction-progress"; event: LinkPreviewProgressEvent }
   | { type: "content-extracted"; content: ExtractedLinkContent }
@@ -97,10 +113,7 @@ export type SummarizeEvent =
 
 export type SummarizeEventSink = (event: SummarizeEvent) => void;
 
-export type UrlSummarizeInput = Exclude<
-  SummarizeInput,
-  { kind: "resolved-asset" | "resolved-media" }
->;
+export type UrlSummarizeInput = Extract<SummarizeInput, { kind: "visible-page" | "url" }>;
 
 export type AssetExecutionInput = {
   kind: "asset";
@@ -112,6 +125,7 @@ export type AssetExecutionInput = {
 
 export type SummarizeEventInput =
   | UrlSummarizeInput
+  | Extract<SummarizeInput, { kind: "file" | "stdin" }>
   | {
       kind: "resolved-asset";
       sourceKind: "file" | "asset-url";

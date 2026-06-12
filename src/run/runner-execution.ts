@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { createTempFileFromStdin } from "../application/stdin-input.js";
 import { loadLocalAsset, type InputTarget } from "../content/asset.js";
 import { isDirectVideoInput } from "../content/index.js";
 import { hasEngineErrorCode } from "../engine/errors.js";
@@ -14,7 +15,6 @@ import {
 } from "./flows/asset/input.js";
 import type { AssetSummaryResult, SummarizeAssetArgs } from "./flows/asset/types.js";
 import type { UrlFlowContext } from "./flows/url/types.js";
-import { createTempFileFromStdin } from "./stdin-temp-file.js";
 
 function canRetryUrlFlowAfterAssetMiss(ctx: UrlFlowContext): boolean {
   return ctx.flags.firecrawlMode !== "off" && ctx.model.apiStatus.firecrawlConfigured;

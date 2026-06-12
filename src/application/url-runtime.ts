@@ -4,6 +4,7 @@ import type { UrlFlowContext } from "../run/flows/url/types.js";
 import {
   bindSummarizeExecutionEvents,
   createSummarizeExecutionResources,
+  type PreparedSummarizeExecution,
 } from "./execution-resources.js";
 import { resolveSummarizeRun } from "./run-spec.js";
 import type {
@@ -49,12 +50,12 @@ export function createEventWritable(
   return stream;
 }
 
-export function createSummarizeUrlFlowContext(args: {
+export function createSummarizeRuntimeResources(args: {
   request: SummarizeRequest;
   runtime: SummarizeRuntime;
   runStartedAtMs: number;
   emit: SummarizeEventSink;
-}): UrlFlowContext {
+}): PreparedSummarizeExecution {
   const { request, runtime, runStartedAtMs, emit } = args;
   const { extractOnly, slides } = request;
   const { env, fetch: fetchImpl, urlFetch: urlFetchImpl, cache, mediaCache, execFile } = runtime;
@@ -64,6 +65,11 @@ export function createSummarizeUrlFlowContext(args: {
   const stderr = process.stderr;
 
   const summaryStream = createEventSummaryStreamHandler(emit);
+  const directAssetInput =
+    request.input.kind === "file" ||
+    request.input.kind === "stdin" ||
+    request.input.kind === "resolved-asset" ||
+    request.input.kind === "resolved-media";
   const resources = createSummarizeExecutionResources({
     resolvedRun: { spec, bindings },
     env: envForRun,
@@ -90,8 +96,17 @@ export function createSummarizeUrlFlowContext(args: {
       setClearProgressBeforeStdout: () => {},
       clearProgressIfCurrent: () => {},
     },
-    assetSummaryOverrides: { format: "text" },
+    assetSummaryOverrides: { format: directAssetInput ? request.format : "text" },
   });
 
-  return bindSummarizeExecutionEvents(resources, emit).urlFlowContext;
+  return bindSummarizeExecutionEvents(resources, emit);
+}
+
+export function createSummarizeUrlFlowContext(args: {
+  request: SummarizeRequest;
+  runtime: SummarizeRuntime;
+  runStartedAtMs: number;
+  emit: SummarizeEventSink;
+}): UrlFlowContext {
+  return createSummarizeRuntimeResources(args).urlFlowContext;
 }

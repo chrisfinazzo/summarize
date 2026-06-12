@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { isDirectMediaExtension, isDirectMediaUrl } from "@steipete/summarize-core/content/url";
 import {
@@ -14,6 +15,7 @@ export type AcquiredAssetInput = {
   sourceKind: "file" | "asset-url";
   sourceLabel: string;
   attachment: AssetAttachment;
+  sizeBytes: number | null;
 };
 
 export type UrlAssetRoute = "asset" | "media" | "none";
@@ -45,10 +47,12 @@ function createMediaInput({
   sourceKind,
   sourceLabel,
   filename,
+  sizeBytes,
 }: {
   sourceKind: "file" | "asset-url";
   sourceLabel: string;
   filename: string;
+  sizeBytes: number | null;
 }): AcquiredAssetInput {
   return {
     kind: "resolved-media",
@@ -60,6 +64,7 @@ function createMediaInput({
       mediaType: "audio/mpeg",
       bytes: new Uint8Array(0),
     },
+    sizeBytes,
   };
 }
 
@@ -71,10 +76,15 @@ export async function acquireLocalAssetInput({
   maxBytes?: number;
 }): Promise<AcquiredAssetInput> {
   if (isTranscribableAssetPath(filePath)) {
+    const sizeBytes = await fs
+      .stat(filePath)
+      .then((stat) => (stat.isFile() ? stat.size : null))
+      .catch(() => null);
     return createMediaInput({
       sourceKind: "file",
       sourceLabel: filePath,
       filename: path.basename(filePath),
+      sizeBytes,
     });
   }
 
@@ -87,6 +97,7 @@ export async function acquireLocalAssetInput({
     sourceKind: "file",
     sourceLabel: loaded.sourceLabel,
     attachment: loaded.attachment,
+    sizeBytes: loaded.attachment.bytes.byteLength,
   };
 }
 
@@ -125,6 +136,7 @@ export function createRemoteMediaInput(url: string): AcquiredAssetInput {
     sourceKind: "asset-url",
     sourceLabel: url,
     filename,
+    sizeBytes: null,
   });
 }
 
@@ -155,5 +167,6 @@ export async function acquireRemoteAssetInput({
     sourceKind: "asset-url",
     sourceLabel: loaded.sourceLabel,
     attachment: loaded.attachment,
+    sizeBytes: loaded.attachment.bytes.byteLength,
   };
 }

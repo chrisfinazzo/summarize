@@ -25,6 +25,7 @@ describe("application input acquisition", () => {
       kind: "resolved-media",
       sourceKind: "file",
       sourceLabel: "/missing/large-video.mp4",
+      sizeBytes: null,
       attachment: {
         kind: "file",
         filename: "large-video.mp4",

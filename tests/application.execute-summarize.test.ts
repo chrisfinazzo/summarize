@@ -1,4 +1,8 @@
 import { execFile } from "node:child_process";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import type { ExtractedLinkContent } from "../src/content/index.js";
 import type { ExecFileFn } from "../src/markitdown.js";
@@ -492,6 +496,166 @@ describe("executeSummarize", () => {
     });
     expect(events[0]?.input).not.toHaveProperty("attachment");
     expect(events.at(-1)?.type).toBe("run-completed");
+  });
+
+  it("acquires and executes raw local files inside the application boundary", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "summarize-raw-file-"));
+    const filePath = path.join(dir, "notes.txt");
+    await writeFile(filePath, "Raw file content");
+    let executionFormat: string | null = null;
+    mocks.executeAssetSummary.mockImplementationOnce(async (ctx, args) => {
+      executionFormat = ctx.format;
+      return {
+        kind: "summary",
+        outcome: "short-content",
+        summary: new TextDecoder().decode(args.attachment.bytes),
+        summaryEmitted: false,
+        summaryFromCache: false,
+        prompt: "Prompt",
+        extracted: {
+          kind: "asset",
+          source: args.sourceLabel,
+          mediaType: args.attachment.mediaType,
+          filename: args.attachment.filename,
+        },
+        footerParts: [],
+        llm: null,
+      };
+    });
+    const events: Array<{ type: string; phase?: string; input?: unknown }> = [];
+
+    try {
+      const result = await executeSummarize(
+        {
+          input: { kind: "file", filePath },
+          modelOverride: "openai/gpt-5.4",
+          promptOverride: null,
+          lengthRaw: null,
+          languageRaw: null,
+          format: "markdown",
+          overrides: createEmptyRunOverrides(),
+          extractOnly: false,
+          slides: null,
+        },
+        {
+          runId: "raw-file",
+          env: { OPENAI_API_KEY: "test-key" },
+          fetch: globalThis.fetch,
+          execFile: execFile as unknown as ExecFileFn,
+          cache: { mode: "bypass", store: null, ttlMs: 0, maxBytes: 0, path: null },
+          mediaCache: null,
+        },
+        (event) => {
+          events.push({
+            type: event.type,
+            ...(event.type === "run-started" ? { input: event.input } : {}),
+            ...(event.type === "input-progress" ? { phase: event.phase } : {}),
+          });
+        },
+      );
+
+      expect(result).toMatchObject({
+        kind: "asset-summary",
+        input: {
+          sourceKind: "file",
+          source: filePath,
+          mediaType: "text/plain",
+          filename: "notes.txt",
+        },
+        summary: "Raw file content",
+      });
+      expect(executionFormat).toBe("markdown");
+      expect(events.slice(0, 3)).toEqual([
+        { type: "run-started", input: { kind: "file", filePath } },
+        { type: "input-progress", phase: "loading" },
+        { type: "input-progress", phase: "summarizing" },
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("owns stdin temp-file cleanup through raw application execution", async () => {
+    let acquiredPath: string | null = null;
+    mocks.executeAssetSummary.mockImplementationOnce(async (_ctx, args) => {
+      acquiredPath = args.sourceLabel;
+      return {
+        kind: "summary",
+        outcome: "short-content",
+        summary: new TextDecoder().decode(args.attachment.bytes),
+        summaryEmitted: false,
+        summaryFromCache: false,
+        prompt: "Prompt",
+        extracted: {
+          kind: "asset",
+          source: args.sourceLabel,
+          mediaType: args.attachment.mediaType,
+          filename: args.attachment.filename,
+        },
+        footerParts: [],
+        llm: null,
+      };
+    });
+    const assetSummaryContext = {
+      onSummaryCached: null,
+      buildReport: vi.fn(async () => ({
+        llm: [],
+        services: { firecrawl: { requests: 0 }, apify: { requests: 0 } },
+      })),
+      estimateCostUsd: vi.fn(async () => null),
+    };
+    const preparedContext = {
+      hooks: {
+        onModelChosen: null,
+        onExtracted: null,
+        onSlidesExtracted: null,
+        onSlidesProgress: null,
+        onSlidesDone: null,
+        onSlideChunk: undefined,
+        onLinkPreviewProgress: null,
+        onSummaryCached: null,
+        summarizeAsset: vi.fn(),
+      },
+    } as unknown as UrlFlowContext;
+    const events: Array<{ type: string; input?: unknown }> = [];
+
+    const result = await executeSummarize(
+      {
+        input: { kind: "stdin" },
+        modelOverride: null,
+        promptOverride: null,
+        lengthRaw: null,
+        languageRaw: null,
+        format: "text",
+        overrides: createEmptyRunOverrides(),
+        extractOnly: false,
+        slides: null,
+      },
+      {
+        runId: "raw-stdin",
+        env: {},
+        fetch: globalThis.fetch,
+        execFile: execFile as unknown as ExecFileFn,
+        cache: { mode: "bypass", store: null, ttlMs: 0, maxBytes: 0, path: null },
+        mediaCache: null,
+        stdin: Readable.from(["stdin content"]),
+      },
+      (event) => {
+        events.push({
+          type: event.type,
+          ...(event.type === "run-started" ? { input: event.input } : {}),
+        });
+      },
+      {
+        urlFlowContext: preparedContext,
+        assetSummaryContext: assetSummaryContext as never,
+      },
+    );
+
+    expect(result).toMatchObject({ kind: "asset-summary", summary: "stdin content" });
+    expect(events[0]).toEqual({ type: "run-started", input: { kind: "stdin" } });
+    expect(acquiredPath).toMatch(/summarize-stdin-/);
+    await expect(access(acquiredPath ?? "")).rejects.toThrow();
   });
 
   it("executes resolved media with byte-free result metadata", async () => {

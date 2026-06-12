@@ -21,7 +21,7 @@ vi.mock("../src/run/flows/asset/input", async (importOriginal) => ({
 vi.mock("../src/run/flows/url/flow", () => ({
   runUrlFlow,
 }));
-vi.mock("../src/run/stdin-temp-file", () => ({
+vi.mock("../src/application/stdin-input", () => ({
   createTempFileFromStdin,
 }));
 

@@ -22,15 +22,7 @@ import { resolveRunContextState, type RunContextState } from "./context.js";
 import { resolveRunModelSpec, type RunModelSpec } from "./model-runtime.js";
 import type { SummarizeRequest } from "./summarize-contracts.js";
 
-export type SummarizeRunInput =
-  | SummarizeRequest["input"]
-  | {
-      kind: "file";
-      filePath: string;
-    }
-  | {
-      kind: "stdin";
-    };
+export type SummarizeRunInput = SummarizeRequest["input"];
 
 export type SummarizeRunRequest = Omit<SummarizeRequest, "input"> & {
   input: SummarizeRunInput;
