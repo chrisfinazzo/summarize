@@ -1,4 +1,4 @@
-import { isYouTubeVideoUrl, shouldPreferUrlMode } from "@steipete/summarize-core/content/url";
+import { isYouTubeVideoUrl } from "@steipete/summarize-core/content/url";
 import { defineBackground } from "wxt/utils/define-background";
 import { createBrowserPanelCacheStore } from "../lib/browser-panel-cache";
 import { buildDaemonRequestBody, buildSummarizeRequestBody } from "../lib/daemon-payload";
@@ -9,6 +9,7 @@ import type { BgToPanel, PanelCachePayload, PanelToBg } from "../lib/panel-contr
 import { loadSettings, patchSettings } from "../lib/settings";
 import { transcribeBrowserMediaInTab } from "./background/browser-local-transcript";
 import { runBrowserSlidesForTab, takeBrowserSlidesPayload } from "./background/browser-slides";
+import { createBrowserSlidesRuntime } from "./background/browser-slides-runtime";
 import {
   beginSlideFrameCaptureInTab,
   canSummarizeUrl,
@@ -84,15 +85,6 @@ export default defineBackground(() => {
   // postMessage → content-script → runtime bridge.
   const nativeInputArmedTabs = new Map<number, string>();
   const artifactsArmedTabs = new Set<number>();
-  const browserSlidesInFlightByWindowId = new Map<
-    number,
-    { key: string; userInitiated: boolean }
-  >();
-  const browserSlidesRetryByWindowId = new Map<
-    number,
-    { inputMode?: "page" | "video"; reason?: string }
-  >();
-
   function resolveLogLevel(event: string) {
     const normalized = event.toLowerCase();
     if (normalized.includes("error") || normalized.includes("failed")) return "error";
@@ -152,163 +144,25 @@ export default defineBackground(() => {
     logExtract,
     friendlyFetchError,
   });
-
-  async function maybeStartBrowserSlides(
-    session: BackgroundPanelSession,
-    opts: { inputMode?: "page" | "video"; reason?: string },
-  ) {
-    const setBrowserSlidesDebug = (value: unknown) => {
-      (
-        globalThis as typeof globalThis & {
-          __summarizeBrowserSlidesLastResult?: unknown;
-        }
-      ).__summarizeBrowserSlidesLastResult = value;
-    };
-    const tab = await getActiveTab(session.windowId);
-    const tabUrl = tab?.url ?? "";
-    const inputMode =
-      opts.inputMode ?? (shouldPreferUrlMode(tabUrl) || isYouTubeVideoUrl(tabUrl) ? "video" : null);
-    const canAttemptBrowserCapture =
-      isYouTubeVideoUrl(tabUrl) || opts.inputMode === "video" || opts.reason === "slides-capture";
-    if (inputMode !== "video") {
-      return;
-    }
-    if (!canAttemptBrowserCapture) {
-      setBrowserSlidesDebug({ ok: false, error: "skipped: browser capture requires video" });
-      return;
-    }
-    const settings = await loadSettings();
-    const isUserInitiatedCapture =
-      opts.reason === "manual" ||
-      opts.reason === "refresh" ||
-      opts.reason === "length-change" ||
-      opts.reason === "slides-capture";
-    if (!isUserInitiatedCapture && opts.reason !== "cache-restore" && !settings.autoSummarize) {
-      setBrowserSlidesDebug({ ok: false, error: "skipped: auto summarize disabled" });
-      return;
-    }
-    if (!settings.slidesEnabled) {
-      setBrowserSlidesDebug({ ok: false, error: "skipped: slides disabled" });
-      return;
-    }
-    if (settings.slideRuntime !== "browser") {
-      setBrowserSlidesDebug({ ok: false, error: "skipped: daemon runtime selected" });
-      return;
-    }
-    if (!tab?.id || !canSummarizeUrl(tab.url)) {
-      setBrowserSlidesDebug({ ok: false, error: "skipped: no capturable active tab" });
-      return;
-    }
-    const cachedPanel = panelSessionStore.getPanelCache(tab.id, tab.url ?? null);
-    if (!isUserInitiatedCapture && cachedPanel?.slides?.slides?.length) {
-      setBrowserSlidesDebug({ ok: false, error: "skipped: slides already cached" });
-      return;
-    }
-    const captureKey = tab.url ?? String(tab.id);
-    const activeCaptureKey = browserSlidesInFlightByWindowId.get(session.windowId);
-    if (activeCaptureKey) {
-      if (
-        activeCaptureKey.key !== captureKey ||
-        (isUserInitiatedCapture && !activeCaptureKey.userInitiated)
-      ) {
-        browserSlidesRetryByWindowId.set(session.windowId, {
-          inputMode: opts.inputMode,
-          reason: opts.reason,
-        });
-      }
-      return;
-    }
-    browserSlidesInFlightByWindowId.set(session.windowId, {
-      key: captureKey,
-      userInitiated: isUserInitiatedCapture,
-    });
-    sendStatus(session, "Capturing slides in browser...");
-    delete (
-      globalThis as typeof globalThis & {
-        __summarizeBrowserMediaFallback?: string;
-      }
-    ).__summarizeBrowserMediaFallback;
-    const result = await (async () => {
-      try {
-        const transcript =
-          isYouTubeVideoUrl(tabUrl) && tab.id
-            ? await extractYouTubeTranscriptInTab(tab.id, settings.maxChars)
-            : null;
-        return await runBrowserSlidesForTab({
-          tab,
-          windowId: session.windowId,
-          beginFrameCapture: beginSlideFrameCaptureInTab,
-          prepareFrame: prepareSlideFrameInTab,
-          prepareCurrentFrame: prepareCurrentSlideFrameInTab,
-          restoreFrame: restoreSlideFrameInTab,
-          getMediaInfo: getPrimaryMediaInfoInTab,
-          transcriptTimedText: transcript?.ok ? transcript.transcriptTimedText : null,
-          captureMode: isUserInitiatedCapture ? "seek" : "current",
-          onStatus: (status) => sendStatus(session, status),
-          onMediaDecoderFallback: (error) => {
-            (
-              globalThis as typeof globalThis & {
-                __summarizeBrowserMediaFallback?: string;
-              }
-            ).__summarizeBrowserMediaFallback = error;
-            logExtensionEvent({
-              event: "slides.browser-media.fallback",
-              detail: { error, url: tabUrl },
-              scope: "slides",
-              level: "verbose",
-            });
-            sendStatus(session, "Capturing slides in browser...");
-          },
-        });
-      } catch (err) {
-        return {
-          ok: false as const,
-          error: err instanceof Error ? err.message : String(err),
-        };
-      } finally {
-        if (browserSlidesInFlightByWindowId.get(session.windowId)?.key === captureKey) {
-          browserSlidesInFlightByWindowId.delete(session.windowId);
-        }
-      }
-    })();
-    const retry = browserSlidesRetryByWindowId.get(session.windowId) ?? null;
-    if (retry) {
-      browserSlidesRetryByWindowId.delete(session.windowId);
-    }
-    setBrowserSlidesDebug(result);
-    if (!result.ok) {
-      if (retry) {
-        void maybeStartBrowserSlides(session, retry);
-        return;
-      }
-      void send(session, { type: "slides:run", ok: false, error: result.error });
-      sendStatus(session, `Slides failed: ${result.error}`);
-      return;
-    }
-    void send(session, {
-      type: "slides:run",
-      ok: true,
-      runId: result.runId,
-      url: result.slides.sourceUrl,
-      local: true,
-    });
-    sendStatus(session, "");
-    if (retry) {
-      void maybeStartBrowserSlides(session, retry);
-    }
-  }
-
-  function summarizeActiveTabWithBrowserSlides(
-    session: BackgroundPanelSession,
-    reason: string,
-    opts?: { refresh?: boolean; inputMode?: "page" | "video" },
-  ) {
-    void summarizeActiveTab(session, reason, opts);
-    void maybeStartBrowserSlides(session, {
-      inputMode: opts?.inputMode,
-      reason,
-    });
-  }
+  const browserSlidesRuntime = createBrowserSlidesRuntime<BackgroundPanelSession>({
+    loadSettings,
+    getActiveTab,
+    canSummarizeUrl,
+    panelSessionStore,
+    send,
+    sendStatus,
+    summarizeActiveTab,
+    runBrowserSlidesForTab,
+    extractYouTubeTranscriptInTab,
+    beginSlideFrameCaptureInTab,
+    prepareSlideFrameInTab,
+    prepareCurrentSlideFrameInTab,
+    restoreSlideFrameInTab,
+    getPrimaryMediaInfoInTab,
+    logExtensionEvent,
+  });
+  const maybeStartBrowserSlides = browserSlidesRuntime.start;
+  const summarizeActiveTabWithBrowserSlides = browserSlidesRuntime.summarize;
 
   const handlePanelMessage = (session: BackgroundPanelSession, raw: PanelToBg) => {
     if (!raw || typeof raw !== "object" || typeof (raw as { type?: unknown }).type !== "string") {
