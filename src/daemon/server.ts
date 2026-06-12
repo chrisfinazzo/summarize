@@ -9,13 +9,14 @@ import { resolveExecutableInPath } from "../run/env.js";
 import { createMediaCacheFromConfig } from "../run/media-cache-state.js";
 import { resolvePackageVersion } from "../version.js";
 import { AuthRateLimiter } from "./auth-rate-limit.js";
-import { daemonConfigTokens, isAuthorizedDaemonToken, type DaemonConfig } from "./config.js";
+import type { DaemonConfig } from "./config.js";
 import { DAEMON_HOST, DAEMON_PORT_DEFAULT } from "./constants.js";
 import { resolveDaemonLogPaths } from "./launchd.js";
 import { ProcessRegistry } from "./process-registry.js";
 import { handleAdminRoutes } from "./server-admin-routes.js";
 import { handleAgentRoute } from "./server-agent-route.js";
-import { corsHeaders, json, readBearerToken, readCorsHeaders, text } from "./server-http.js";
+import { authorizeDaemonRequest } from "./server-auth.js";
+import { corsHeaders, json, readCorsHeaders, text } from "./server-http.js";
 import { handleRefreshFreeRoute } from "./server-refresh-route.js";
 import { DaemonRuntime, resolveDaemonMaxActiveSummaries } from "./server-runtime.js";
 import { handleSessionRoutes } from "./server-session-routes.js";
@@ -111,39 +112,8 @@ export async function runDaemonServer({
         return;
       }
 
-      const token = readBearerToken(req);
-      const authed = token ? isAuthorizedDaemonToken(token, daemonConfigTokens(config)) : false;
-      if (pathname.startsWith("/v1/")) {
-        // `req.socket.remoteAddress` is loopback in the common case; for
-        // 0.0.0.0 binds inside Windows containers it's the caller's IP.
-        const clientKey = req.socket.remoteAddress ?? null;
-        const preCheck = authLimiter.check(clientKey);
-        if (!preCheck.allowed) {
-          json(
-            res,
-            429,
-            { ok: false, error: "too many auth failures" },
-            { ...cors, "retry-after": String(preCheck.retryAfterSeconds) },
-          );
-          return;
-        }
-        if (!authed) {
-          const decision = authLimiter.recordFailure(clientKey);
-          const headers = decision.allowed
-            ? cors
-            : { ...cors, "retry-after": String(decision.retryAfterSeconds) };
-          json(
-            res,
-            decision.allowed ? 401 : 429,
-            {
-              ok: false,
-              error: decision.allowed ? "unauthorized" : "too many auth failures",
-            },
-            headers,
-          );
-          return;
-        }
-        authLimiter.recordSuccess(clientKey);
+      if (!authorizeDaemonRequest({ req, res, pathname, cors, config, limiter: authLimiter })) {
+        return;
       }
 
       if (
