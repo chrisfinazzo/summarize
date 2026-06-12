@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CacheState } from "../src/cache.js";
 import type { ExtractedLinkContent } from "../src/content/index.js";
-import { runUrlFlow } from "../src/run/flows/url/flow.js";
+import { executeUrlFlow, runUrlFlow } from "../src/run/flows/url/flow.js";
 import { createTestSummarizeUrlFlowContext } from "./helpers/application-summarize.js";
 
 describe("runUrlFlow", () => {
@@ -34,6 +34,7 @@ describe("runUrlFlow", () => {
     };
 
     let extracted: ExtractedLinkContent | null = null;
+    const outputChunks: string[] = [];
     const ctx = createTestSummarizeUrlFlowContext({
       env: { HOME: root, OPENAI_API_KEY: "test" },
       fetchImpl,
@@ -49,13 +50,15 @@ describe("runUrlFlow", () => {
         },
       },
       runStartedAtMs: Date.now(),
-      stdoutSink: { writeChunk: () => {} },
+      stdoutSink: { writeChunk: (text) => outputChunks.push(text) },
     });
 
     ctx.flags.extractMode = true;
 
-    await runUrlFlow({ ctx, url, isYoutubeUrl: false });
+    const result = await executeUrlFlow({ ctx, url, isYoutubeUrl: false });
 
+    expect(result.kind).toBe("extraction");
+    expect(outputChunks).toEqual([]);
     expect(extracted).not.toBeNull();
     expect(extracted?.content.length).toBeLessThanOrEqual(9_000);
     expect(extracted?.truncated).toBe(true);

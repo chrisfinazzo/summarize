@@ -7,7 +7,11 @@ import { deriveExtractionUi, type UrlExtractionUi } from "./extract.js";
 import type { UrlFlowContext } from "./types.js";
 
 export type VideoOnlyResult =
-  | { handled: true }
+  | {
+      handled: true;
+      extracted: ExtractedLinkContent;
+      slides: SlideExtractionResult | null;
+    }
   | {
       handled: false;
       extracted: ExtractedLinkContent;
@@ -111,5 +115,5 @@ export async function handleVideoOnlyExtractedContent({
     ...(slideCount != null ? [`slides ${slideCount}`] : []),
   ]);
   updateSummaryProgress();
-  return { handled: true };
+  return { handled: true, extracted, slides: directVideoSlides };
 }

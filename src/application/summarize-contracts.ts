@@ -83,6 +83,7 @@ export type SummarizeEventSink = (event: SummarizeEvent) => void;
 export type SummaryResult = {
   kind: "summary";
   input: SummarizeInput;
+  summary: string;
   usedModel: string;
   extracted: ExtractedLinkContent;
   summaryFromCache: boolean;

@@ -103,12 +103,13 @@ describe("daemon summary cache", () => {
         },
       );
       if (result.kind !== "summary") throw new Error("expected summary result");
-      return { out, metrics: buildDaemonSummaryMetrics(result), events };
+      return { out, summary: result.summary, metrics: buildDaemonSummaryMetrics(result), events };
     };
 
     const first = await runOnce();
     expect(mocks.streamSimple).toHaveBeenCalledTimes(1);
     expect(first.out).toBe("### Overview\n- Cached summary.\n");
+    expect(first.summary).toBe("### Overview\n- Cached summary.");
     expect(first.events.slice(0, 3)).toEqual([
       { type: "run-started" },
       { type: "content-extracted" },
@@ -120,6 +121,7 @@ describe("daemon summary cache", () => {
     const second = await runOnce();
     expect(mocks.streamSimple).toHaveBeenCalledTimes(1);
     expect(second.out).toBe(first.out);
+    expect(second.summary).toBe(first.summary);
     expect(second.metrics.summary.split(" · ")[0]).toBe("Cached");
     expect(second.events).toContainEqual({ type: "summary-cache", cached: true });
     expect(second.events.at(-1)).toEqual({ type: "run-completed" });

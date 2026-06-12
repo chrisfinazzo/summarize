@@ -1,8 +1,8 @@
 import { isYouTubeUrl } from "../content/index.js";
 import type { ExtractedLinkContent } from "../content/index.js";
 import { buildUrlPrompt } from "../engine/web-prompt.js";
-import { resolveUrlSummaryExecution } from "../engine/web-summary.js";
-import { runUrlFlow } from "../run/flows/url/flow.js";
+import { resolveUrlSummaryExecution, type UrlSummaryResolution } from "../engine/web-summary.js";
+import { executeUrlFlow } from "../run/flows/url/flow.js";
 import type { UrlFlowContext } from "../run/flows/url/types.js";
 import {
   readLastSuccessfulCliProvider,
@@ -84,7 +84,7 @@ async function executeVisiblePageSummary({
   ctx: UrlFlowContext;
   input: Extract<SummarizeRequest["input"], { kind: "visible-page" }>;
   cacheMode: SummarizeRuntime["cache"]["mode"];
-}): Promise<ExtractedLinkContent> {
+}): Promise<{ extracted: ExtractedLinkContent; resolution: UrlSummaryResolution }> {
   const extracted = createVisiblePageContent(input, cacheMode);
   ctx.hooks.onExtracted?.(extracted);
 
@@ -111,12 +111,30 @@ async function executeVisiblePageSummary({
         writeLastSuccessfulCliProvider({ env: ctx.io.envForRun, provider }),
     },
   });
+  return { extracted, resolution };
+}
+
+function emitResolvedSummary({
+  resolution,
+  extracted,
+  emit,
+}: {
+  resolution: UrlSummaryResolution;
+  extracted: ExtractedLinkContent;
+  emit: SummarizeEventSink;
+}): string {
   if (resolution.kind === "use-extracted") {
-    ctx.io.stdout.write(`${extracted.content}\n`);
-  } else if (!resolution.summaryEmitted) {
-    ctx.io.stdout.write(`${resolution.normalizedSummary}\n`);
+    emit({ type: "summary-delta", text: `${extracted.content}\n` });
+    return extracted.content;
   }
-  return extracted;
+  if (!resolution.summaryEmitted) {
+    const normalized = resolution.normalizedSummary.replace(/^\n+/, "");
+    emit({
+      type: "summary-delta",
+      text: normalized.endsWith("\n") ? normalized : `${normalized}\n`,
+    });
+  }
+  return resolution.normalizedSummary;
 }
 
 export async function executeSummarize(
@@ -128,6 +146,8 @@ export async function executeSummarize(
   const startedAt = now();
   let usedModel: string | null = null;
   let summaryFromCache = false;
+  let summaryText = "";
+  let normalizedSummary: string | null = null;
   let extracted: ExtractedLinkContent | null = null;
   let slides: ExtractionResult["slides"] = null;
 
@@ -140,6 +160,8 @@ export async function executeSummarize(
       extracted = event.content;
     } else if (event.type === "slides-extracted") {
       slides = event.slides;
+    } else if (event.type === "summary-delta") {
+      summaryText += event.text;
     }
     events(event);
     if (event.type === "content-extracted" && !request.extractOnly) {
@@ -162,18 +184,38 @@ export async function executeSummarize(
     });
 
     if (request.input.kind === "visible-page") {
-      extracted = await executeVisiblePageSummary({
+      const visiblePageResult = await executeVisiblePageSummary({
         ctx,
         input: request.input,
         cacheMode: runtime.cache.mode,
       });
+      extracted = visiblePageResult.extracted;
+      normalizedSummary = emitResolvedSummary({
+        resolution: visiblePageResult.resolution,
+        extracted,
+        emit,
+      });
     } else {
       emit({ type: "extraction-started", url: request.input.url });
-      await runUrlFlow({
+      const urlResult = await executeUrlFlow({
         ctx,
         url: request.input.url,
         isYoutubeUrl: isYouTubeUrl(request.input.url),
       });
+      extracted = urlResult.extracted;
+      if (!slides) slides = urlResult.slides;
+      if (!request.extractOnly) {
+        if (urlResult.kind === "extraction") {
+          throw new Error("Internal error: summary execution returned extraction result");
+        }
+        if (urlResult.kind === "summary") {
+          normalizedSummary = emitResolvedSummary({
+            resolution: urlResult.resolution,
+            extracted,
+            emit,
+          });
+        }
+      }
     }
 
     if (!extracted) {
@@ -194,6 +236,7 @@ export async function executeSummarize(
     const result: SummaryResult = {
       kind: "summary",
       input: request.input,
+      summary: normalizedSummary ?? summaryText.replace(/\n$/, ""),
       usedModel: usedModel ?? ctx.model.requestedModelLabel,
       extracted,
       summaryFromCache,

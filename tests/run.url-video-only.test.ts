@@ -287,7 +287,11 @@ describe("handleVideoOnlyExtractedContent", () => {
       accent: (text) => text,
     });
 
-    expect(result).toEqual({ handled: true });
+    expect(result).toMatchObject({
+      handled: true,
+      extracted: baseExtracted,
+      slides: { sourceId: "vid123", slides: [{ index: 1 }, { index: 2 }] },
+    });
     expect(onExtracted).toHaveBeenCalledWith(baseExtracted);
     expect(mocks.loadRemoteAsset).toHaveBeenCalledWith({
       url: "https://cdn.example.com/video.mp4",

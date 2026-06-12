@@ -4,7 +4,10 @@ import type { CacheStore } from "../src/cache.js";
 import type { ExtractedLinkContent } from "../src/content/index.js";
 import { resolveUrlSummaryExecution } from "../src/engine/web-summary.js";
 import { parseRequestedModelId } from "../src/model-spec.js";
-import { summarizeExtractedUrl } from "../src/run/flows/url/summary.js";
+import {
+  executeExtractedUrlSummary,
+  presentExtractedUrlSummary,
+} from "../src/run/flows/url/summary.js";
 import type { UrlFlowContext } from "../src/run/flows/url/types.js";
 
 function collectStream() {
@@ -55,7 +58,7 @@ const extracted: ExtractedLinkContent = {
   },
 };
 
-describe("summarizeExtractedUrl timestamp guard", () => {
+describe("extracted URL summary timestamp guard", () => {
   it("disables streaming and strips impossible key moments before output and cache", async () => {
     const stdout = collectStream();
     const stderr = collectStream();
@@ -223,7 +226,14 @@ describe("summarizeExtractedUrl timestamp guard", () => {
       },
     };
 
-    await summarizeExtractedUrl({
+    const resolution = await executeExtractedUrlSummary({
+      ctx,
+      url: extracted.url,
+      extracted,
+      prompt: "Prompt",
+      onModelChosen: null,
+    });
+    await presentExtractedUrlSummary({
       ctx,
       url: extracted.url,
       extracted,
@@ -236,7 +246,7 @@ describe("summarizeExtractedUrl timestamp guard", () => {
       prompt: "Prompt",
       effectiveMarkdownMode: "off",
       transcriptionCostLabel: null,
-      onModelChosen: null,
+      resolution,
     });
 
     const payload = JSON.parse(stdout.getText()) as { summary: string };

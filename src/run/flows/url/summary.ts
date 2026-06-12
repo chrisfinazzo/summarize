@@ -11,7 +11,10 @@ import {
 } from "../../../application/cli-fallback-state.js";
 import type { ExtractedLinkContent } from "../../../content/index.js";
 import type { RunMetricsReport } from "../../../costs.js";
-import { resolveUrlSummaryExecution } from "../../../engine/web-summary.js";
+import {
+  resolveUrlSummaryExecution,
+  type UrlSummaryResolution,
+} from "../../../engine/web-summary.js";
 import { buildRunJsonEnv } from "../../../shared/run-api-status.js";
 import { buildExtractFinishLabel, writeFinishLine } from "../../finish-line.js";
 import { writeVerbose } from "../../logging.js";
@@ -339,14 +342,11 @@ export async function outputExtractedUrl({
   });
 }
 
-export async function summarizeExtractedUrl({
+export async function executeExtractedUrlSummary({
   ctx,
   url,
   extracted,
-  extractionUi,
   prompt,
-  effectiveMarkdownMode,
-  transcriptionCostLabel,
   onModelChosen,
   slides,
   slidesOutput,
@@ -354,10 +354,7 @@ export async function summarizeExtractedUrl({
   ctx: UrlFlowContext;
   url: string;
   extracted: ExtractedLinkContent;
-  extractionUi: UrlExtractionUi;
   prompt: string;
-  effectiveMarkdownMode: "off" | "auto" | "llm" | "readability";
-  transcriptionCostLabel: string | null;
   onModelChosen?: ((modelId: string) => void) | null;
   slides?: Awaited<
     ReturnType<typeof import("../../../slides/index.js").extractSlidesForSource>
@@ -383,7 +380,35 @@ export async function summarizeExtractedUrl({
         writeLastSuccessfulCliProvider({ env: io.envForRun, provider }),
     },
   });
+  return resolution;
+}
 
+export async function presentExtractedUrlSummary({
+  ctx,
+  url,
+  extracted,
+  extractionUi,
+  prompt,
+  effectiveMarkdownMode,
+  transcriptionCostLabel,
+  resolution,
+  slides,
+  slidesOutput,
+}: {
+  ctx: UrlFlowContext;
+  url: string;
+  extracted: ExtractedLinkContent;
+  extractionUi: UrlExtractionUi;
+  prompt: string;
+  effectiveMarkdownMode: "off" | "auto" | "llm" | "readability";
+  transcriptionCostLabel: string | null;
+  resolution: UrlSummaryResolution;
+  slides?: Awaited<
+    ReturnType<typeof import("../../../slides/index.js").extractSlidesForSource>
+  > | null;
+  slidesOutput?: SlidesTerminalOutput | null;
+}) {
+  const { io, flags, hooks } = ctx;
   if (resolution.kind === "use-extracted") {
     await outputSummaryFromExtractedContent({
       ctx,
