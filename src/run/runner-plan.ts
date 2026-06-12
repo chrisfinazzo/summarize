@@ -18,6 +18,7 @@ import { writeVerbose } from "./logging.js";
 import { createMediaCacheFromConfig } from "./media-cache-state.js";
 import type { PerfTrace } from "./perf-trace.js";
 import { createProgressGate } from "./progress.js";
+import { resolveProviderRuntimeBindings } from "./provider-runtime.js";
 import { resolveRunContextState } from "./run-context.js";
 import { resolveRunInput } from "./run-input.js";
 import { createRunMetrics } from "./run-metrics.js";
@@ -145,6 +146,16 @@ export async function createRunnerPlan(options: {
       ? "auto"
       : modelArg;
 
+  const runContext = resolveRunContextState({
+    env,
+    envForRun,
+    programOpts,
+    languageExplicitlySet,
+    videoModeExplicitlySet,
+    embeddedVideoExplicitlySet,
+    cliFlagPresent,
+    cliProviderArg,
+  });
   const {
     config,
     configPath,
@@ -187,15 +198,11 @@ export async function createRunnerPlan(options: {
     falApiKey,
     cliAvailability,
     envForAuto,
-  } = resolveRunContextState({
-    env,
-    envForRun,
-    programOpts,
-    languageExplicitlySet,
-    videoModeExplicitlySet,
-    embeddedVideoExplicitlySet,
-    cliFlagPresent,
-    cliProviderArg,
+  } = runContext;
+  const providerRuntime = resolveProviderRuntimeBindings({
+    env: envForRun,
+    envState: runContext,
+    configForCli,
   });
   perfTrace?.mark("plan:context");
 
@@ -363,7 +370,6 @@ export async function createRunnerPlan(options: {
     timeoutMs,
     retries,
     streamingEnabled,
-    openaiUseChatCompletions,
     openaiRequestOptions,
     openaiRequestOptionsOverride,
     cliReasoningEffortOverride,
@@ -375,34 +381,8 @@ export async function createRunnerPlan(options: {
     llmCalls,
     log: (message) => writeVerbose(stderr, verbose, message, verboseColor, envForRun),
     trace: (name, detail) => perfTrace?.mark(name, detail),
-    apiKeys: {
-      xaiApiKey,
-      openaiApiKey: apiKey,
-      googleApiKey,
-      anthropicApiKey,
-      openrouterApiKey,
-    },
-    keyFlags: {
-      googleConfigured,
-      anthropicConfigured,
-      openrouterConfigured,
-    },
-    zai: {
-      apiKey: zaiApiKey,
-      baseUrl: zaiBaseUrl,
-    },
-    nvidia: {
-      apiKey: nvidiaApiKey,
-      baseUrl: nvidiaBaseUrl,
-    },
-    minimax: {
-      apiKey: minimaxApiKey,
-      baseUrl: minimaxBaseUrl,
-    },
-    ollama: {
-      baseUrl: ollamaBaseUrl,
-    },
-    providerBaseUrls,
+    providerRuntime,
+    openrouterApiKey,
   });
   const summaryStream = streamingEnabled
     ? createTerminalSummaryStream({

@@ -256,6 +256,15 @@ export function requiredEnvForGatewayProvider(provider: GatewayProvider): Requir
   return getGatewayProviderProfile(provider).requiredEnv;
 }
 
+export function gatewayProviderForRequiredEnv(
+  requiredEnv: RequiredModelEnv,
+): GatewayProvider | null {
+  for (const [provider, profile] of Object.entries(GATEWAY_PROVIDER_PROFILES)) {
+    if (profile.requiredEnv === requiredEnv) return provider as GatewayProvider;
+  }
+  return null;
+}
+
 export function supportsDocumentAttachments(provider: GatewayProvider): boolean {
   return getGatewayProviderProfile(provider).supportsDocuments;
 }

@@ -3,6 +3,7 @@ export {
   DEFAULT_CLI_MODELS,
   cliProviderForRequiredEnv,
   envHasRequiredKey,
+  gatewayProviderForRequiredEnv,
   getGatewayProviderProfile,
   isGatewayProvider,
   isVideoUnderstandingCapableModelId,

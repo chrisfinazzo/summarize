@@ -1,11 +1,14 @@
 import type { CliProvider } from "../config.js";
 import { isCliDisabled, runCliModel } from "../llm/cli.js";
 import { streamTextWithModelId } from "../llm/generate-text.js";
-import { resolveGitHubModelsApiKey } from "../llm/github-models.js";
 import { parseGatewayStyleModelId } from "../llm/model-id.js";
 import { mergeRequestOptionsForProvider } from "../llm/model-options.js";
 import type { ModelRequestOptions, OpenAiReasoningEffort } from "../llm/model-options.js";
 import type { Prompt } from "../llm/prompt.js";
+import {
+  cliProviderForRequiredEnv,
+  gatewayProviderForRequiredEnv,
+} from "../llm/provider-capabilities.js";
 import type { ProviderRuntimeBindings } from "../llm/provider-profile.js";
 import { formatCompactCount } from "../shared/format-count.js";
 import { countTokens } from "../tokenizer.js";
@@ -28,7 +31,6 @@ export type ModelExecutorDeps = {
   timeoutMs: number;
   retries: number;
   streamingEnabled: boolean;
-  openaiUseChatCompletions: boolean | undefined;
   openaiRequestOptions?: ModelRequestOptions;
   openaiRequestOptionsOverride?: ModelRequestOptions;
   cliReasoningEffortOverride?: OpenAiReasoningEffort;
@@ -56,60 +58,12 @@ export type ModelExecutorDeps = {
   }>;
   log?: ((message: string) => void) | null;
   trace?: ((name: string, detail?: string | null) => void) | null;
-  apiKeys: {
-    xaiApiKey: string | null;
-    openaiApiKey: string | null;
-    googleApiKey: string | null;
-    anthropicApiKey: string | null;
-    openrouterApiKey: string | null;
-  };
-  keyFlags: {
-    googleConfigured: boolean;
-    anthropicConfigured: boolean;
-    openrouterConfigured: boolean;
-  };
-  zai: {
-    apiKey: string | null;
-    baseUrl: string;
-  };
-  nvidia: {
-    apiKey: string | null;
-    baseUrl: string;
-  };
-  minimax: {
-    apiKey: string | null;
-    baseUrl: string;
-  };
-  ollama: {
-    baseUrl: string;
-  };
-  providerBaseUrls: {
-    openai: string | null;
-    anthropic: string | null;
-    google: string | null;
-    xai: string | null;
-  };
+  providerRuntime: ProviderRuntimeBindings;
+  openrouterApiKey: string | null;
 };
 
 export function createModelExecutor(deps: ModelExecutorDeps) {
-  const providerRuntime: ProviderRuntimeBindings = {
-    apiKeys: {
-      openai: deps.apiKeys.openaiApiKey,
-      zai: deps.zai.apiKey,
-      nvidia: deps.nvidia.apiKey,
-      minimax: deps.minimax.apiKey,
-      "github-copilot": resolveGitHubModelsApiKey(deps.envForRun),
-      ollama: null,
-    },
-    baseUrls: {
-      openai: deps.providerBaseUrls.openai,
-      zai: deps.zai.baseUrl,
-      nvidia: deps.nvidia.baseUrl,
-      minimax: deps.minimax.baseUrl,
-      ollama: deps.ollama.baseUrl,
-    },
-    openaiUseChatCompletions: deps.openaiUseChatCompletions,
-  };
+  const providerRuntime = deps.providerRuntime;
 
   const createRetryLogger = (modelId: string) => {
     return (notice: { attempt: number; maxRetries: number; delayMs: number; error?: unknown }) => {
@@ -136,61 +90,14 @@ export function createModelExecutor(deps: ModelExecutorDeps) {
     applyProviderRuntimeToModelAttempt(attempt, providerRuntime);
 
   const envHasKeyFor = (requiredEnv: ModelAttempt["requiredEnv"]) => {
-    if (requiredEnv === "CLI_CLAUDE") {
-      return Boolean(deps.cliAvailability.claude);
-    }
-    if (requiredEnv === "CLI_CODEX") {
-      return Boolean(deps.cliAvailability.codex);
-    }
-    if (requiredEnv === "CLI_GEMINI") {
-      return Boolean(deps.cliAvailability.gemini);
-    }
-    if (requiredEnv === "CLI_AGENT") {
-      return Boolean(deps.cliAvailability.agent);
-    }
-    if (requiredEnv === "CLI_OPENCLAW") {
-      return Boolean(deps.cliAvailability.openclaw);
-    }
-    if (requiredEnv === "CLI_OPENCODE") {
-      return Boolean(deps.cliAvailability.opencode);
-    }
-    if (requiredEnv === "CLI_COPILOT") {
-      return Boolean(deps.cliAvailability.copilot);
-    }
-    if (requiredEnv === "CLI_AGY") {
-      return Boolean(deps.cliAvailability.agy);
-    }
-    if (requiredEnv === "CLI_PI") {
-      return Boolean(deps.cliAvailability.pi);
-    }
-    if (requiredEnv === "GEMINI_API_KEY") {
-      return deps.keyFlags.googleConfigured;
-    }
+    const cliProvider = cliProviderForRequiredEnv(requiredEnv);
+    if (cliProvider) return Boolean(deps.cliAvailability[cliProvider]);
     if (requiredEnv === "OPENROUTER_API_KEY") {
-      return deps.keyFlags.openrouterConfigured;
+      return Boolean(deps.openrouterApiKey);
     }
-    if (requiredEnv === "OPENAI_API_KEY") {
-      return Boolean(deps.apiKeys.openaiApiKey);
-    }
-    if (requiredEnv === "GITHUB_TOKEN") {
-      return Boolean(resolveGitHubModelsApiKey(deps.envForRun));
-    }
-    if (requiredEnv === "NVIDIA_API_KEY") {
-      return Boolean(deps.nvidia.apiKey);
-    }
-    if (requiredEnv === "Z_AI_API_KEY") {
-      return Boolean(deps.zai.apiKey);
-    }
-    if (requiredEnv === "MINIMAX_API_KEY") {
-      return Boolean(deps.minimax.apiKey);
-    }
-    if (requiredEnv === "XAI_API_KEY") {
-      return Boolean(deps.apiKeys.xaiApiKey);
-    }
-    if (requiredEnv === "OLLAMA_BASE_URL") {
-      return true;
-    }
-    return Boolean(deps.apiKeys.anthropicApiKey);
+    const gatewayProvider = gatewayProviderForRequiredEnv(requiredEnv);
+    if (!gatewayProvider || gatewayProvider === "ollama") return gatewayProvider === "ollama";
+    return Boolean(providerRuntime.apiKeys[gatewayProvider]);
   };
 
   const formatMissingModelError = (attempt: ModelAttempt): string => {
@@ -298,14 +205,14 @@ export function createModelExecutor(deps: ModelExecutorDeps) {
     }
     const parsedModel = parseGatewayStyleModelId(attempt.llmModelId);
     const apiKeysForLlm = {
-      xaiApiKey: deps.apiKeys.xaiApiKey,
+      xaiApiKey: providerRuntime.apiKeys.xai ?? null,
       openaiApiKey:
         attempt.openaiApiKeyOverride === undefined
-          ? deps.apiKeys.openaiApiKey
+          ? (providerRuntime.apiKeys.openai ?? null)
           : attempt.openaiApiKeyOverride,
-      googleApiKey: deps.keyFlags.googleConfigured ? deps.apiKeys.googleApiKey : null,
-      anthropicApiKey: deps.keyFlags.anthropicConfigured ? deps.apiKeys.anthropicApiKey : null,
-      openrouterApiKey: deps.keyFlags.openrouterConfigured ? deps.apiKeys.openrouterApiKey : null,
+      googleApiKey: providerRuntime.apiKeys.google ?? null,
+      anthropicApiKey: providerRuntime.apiKeys.anthropic ?? null,
+      openrouterApiKey: deps.openrouterApiKey,
     };
 
     const modelResolution = await resolveModelIdForLlmCall({
@@ -338,7 +245,7 @@ export function createModelExecutor(deps: ModelExecutorDeps) {
         : attempt.transport === "openrouter"
           ? undefined
           : parsedModelEffective.provider === "openai"
-            ? deps.openaiUseChatCompletions
+            ? providerRuntime.openaiUseChatCompletions
             : undefined;
 
     const maxOutputTokensForCall = await deps.resolveMaxOutputTokensForCall(
@@ -372,12 +279,12 @@ export function createModelExecutor(deps: ModelExecutorDeps) {
         fetchImpl: deps.trackedFetch,
         apiKeys: apiKeysForLlm,
         forceOpenRouter: attempt.forceOpenRouter,
-        openaiBaseUrlOverride: attempt.openaiBaseUrlOverride ?? deps.providerBaseUrls.openai,
-        anthropicBaseUrlOverride: deps.providerBaseUrls.anthropic,
-        googleBaseUrlOverride: deps.providerBaseUrls.google,
-        xaiBaseUrlOverride: deps.providerBaseUrls.xai,
-        zaiBaseUrlOverride: deps.zai.baseUrl,
-        ollamaBaseUrlOverride: deps.ollama.baseUrl,
+        openaiBaseUrlOverride: attempt.openaiBaseUrlOverride ?? providerRuntime.baseUrls.openai,
+        anthropicBaseUrlOverride: providerRuntime.baseUrls.anthropic,
+        googleBaseUrlOverride: providerRuntime.baseUrls.google,
+        xaiBaseUrlOverride: providerRuntime.baseUrls.xai,
+        zaiBaseUrlOverride: providerRuntime.baseUrls.zai,
+        ollamaBaseUrlOverride: providerRuntime.baseUrls.ollama,
         forceChatCompletions,
         requestOptions,
         retries: deps.retries,
@@ -419,12 +326,12 @@ export function createModelExecutor(deps: ModelExecutorDeps) {
         fetchImpl: deps.trackedFetch,
         apiKeys: apiKeysForLlm,
         forceOpenRouter: attempt.forceOpenRouter,
-        openaiBaseUrlOverride: attempt.openaiBaseUrlOverride ?? deps.providerBaseUrls.openai,
-        anthropicBaseUrlOverride: deps.providerBaseUrls.anthropic,
-        googleBaseUrlOverride: deps.providerBaseUrls.google,
-        xaiBaseUrlOverride: deps.providerBaseUrls.xai,
-        zaiBaseUrlOverride: deps.zai.baseUrl,
-        ollamaBaseUrlOverride: deps.ollama.baseUrl,
+        openaiBaseUrlOverride: attempt.openaiBaseUrlOverride ?? providerRuntime.baseUrls.openai,
+        anthropicBaseUrlOverride: providerRuntime.baseUrls.anthropic,
+        googleBaseUrlOverride: providerRuntime.baseUrls.google,
+        xaiBaseUrlOverride: providerRuntime.baseUrls.xai,
+        zaiBaseUrlOverride: providerRuntime.baseUrls.zai,
+        ollamaBaseUrlOverride: providerRuntime.baseUrls.ollama,
         forceChatCompletions,
         requestOptions,
         retries: deps.retries,
@@ -464,11 +371,11 @@ export function createModelExecutor(deps: ModelExecutorDeps) {
         modelId: parsedModelEffective.canonical,
         apiKeys: apiKeysForLlm,
         forceOpenRouter: attempt.forceOpenRouter,
-        openaiBaseUrlOverride: attempt.openaiBaseUrlOverride ?? deps.providerBaseUrls.openai,
-        anthropicBaseUrlOverride: deps.providerBaseUrls.anthropic,
-        googleBaseUrlOverride: deps.providerBaseUrls.google,
-        xaiBaseUrlOverride: deps.providerBaseUrls.xai,
-        ollamaBaseUrlOverride: deps.ollama.baseUrl,
+        openaiBaseUrlOverride: attempt.openaiBaseUrlOverride ?? providerRuntime.baseUrls.openai,
+        anthropicBaseUrlOverride: providerRuntime.baseUrls.anthropic,
+        googleBaseUrlOverride: providerRuntime.baseUrls.google,
+        xaiBaseUrlOverride: providerRuntime.baseUrls.xai,
+        ollamaBaseUrlOverride: providerRuntime.baseUrls.ollama,
         forceChatCompletions,
         requestOptions,
         prompt,

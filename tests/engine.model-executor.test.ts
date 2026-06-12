@@ -30,46 +30,38 @@ function createTestModelExecutor(
     timeoutMs: 1000,
     retries: 0,
     streamingEnabled,
-    openaiUseChatCompletions,
     cliConfigForRun: null,
     cliAvailability: {},
     trackedFetch: globalThis.fetch.bind(globalThis),
     resolveMaxOutputTokensForCall: async () => null,
     resolveMaxInputTokensForCall: async () => null,
     llmCalls: [],
-    apiKeys: {
-      xaiApiKey: null,
-      openaiApiKey: "oa-key",
-      googleApiKey: null,
-      anthropicApiKey: null,
-      openrouterApiKey: "or-key",
+    providerRuntime: {
+      apiKeys: {
+        xai: null,
+        openai: "oa-key",
+        google: null,
+        anthropic: null,
+        zai: null,
+        nvidia: null,
+        minimax: "minimax-key",
+        "github-copilot": null,
+        ollama: null,
+      },
+      baseUrls: {
+        xai: null,
+        openai: null,
+        google: null,
+        anthropic: null,
+        zai: "https://api.z.ai/api/paas/v4",
+        nvidia: "https://integrate.api.nvidia.com/v1",
+        minimax: "https://minimax.example.com/v1",
+        "github-copilot": null,
+        ollama: "http://localhost:11434/v1",
+      },
+      openaiUseChatCompletions,
     },
-    keyFlags: {
-      googleConfigured: false,
-      anthropicConfigured: false,
-      openrouterConfigured: true,
-    },
-    zai: {
-      apiKey: null,
-      baseUrl: "https://api.z.ai/api/paas/v4",
-    },
-    nvidia: {
-      apiKey: null,
-      baseUrl: "https://integrate.api.nvidia.com/v1",
-    },
-    minimax: {
-      apiKey: "minimax-key",
-      baseUrl: "https://minimax.example.com/v1",
-    },
-    ollama: {
-      baseUrl: "http://localhost:11434/v1",
-    },
-    providerBaseUrls: {
-      openai: null,
-      anthropic: null,
-      google: null,
-      xai: null,
-    },
+    openrouterApiKey: "or-key",
   });
 }
 
@@ -193,6 +185,19 @@ describe("model executor OpenAI chat-completions routing", () => {
     };
     expect(call.apiKeys?.openaiApiKey).toBeNull();
     expect(call.openaiBaseUrlOverride).toBe("http://localhost:11434/v1");
+  });
+});
+
+describe("model executor credential availability", () => {
+  it("reads gateway, OpenRouter, Ollama, and CLI availability from resolved runtime inputs", () => {
+    const engine = createTestModelExecutor(undefined);
+
+    expect(engine.envHasKeyFor("OPENAI_API_KEY")).toBe(true);
+    expect(engine.envHasKeyFor("MINIMAX_API_KEY")).toBe(true);
+    expect(engine.envHasKeyFor("OPENROUTER_API_KEY")).toBe(true);
+    expect(engine.envHasKeyFor("OLLAMA_BASE_URL")).toBe(true);
+    expect(engine.envHasKeyFor("GITHUB_TOKEN")).toBe(false);
+    expect(engine.envHasKeyFor("CLI_CODEX")).toBe(false);
   });
 });
 

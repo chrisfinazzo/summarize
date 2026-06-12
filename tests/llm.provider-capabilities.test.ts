@@ -4,6 +4,7 @@ import {
   DEFAULT_CLI_MODELS,
   cliProviderForRequiredEnv,
   envHasRequiredKey,
+  gatewayProviderForRequiredEnv,
   isGatewayProvider,
   isVideoUnderstandingCapableModelId,
   parseCliProviderName,
@@ -50,6 +51,8 @@ describe("llm provider capabilities", () => {
     expect(requiredEnvForCliProvider("pi")).toBe("CLI_PI");
     expect(cliProviderForRequiredEnv("CLI_OPENCODE")).toBe("opencode");
     expect(cliProviderForRequiredEnv("OPENAI_API_KEY")).toBeNull();
+    expect(gatewayProviderForRequiredEnv("OPENAI_API_KEY")).toBe("openai");
+    expect(gatewayProviderForRequiredEnv("OPENROUTER_API_KEY")).toBeNull();
     expect(isGatewayProvider("minimax")).toBe(true);
     expect(isGatewayProvider("openrouter")).toBe(false);
   });

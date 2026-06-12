@@ -42,4 +42,16 @@ describe("provider runtime bindings", () => {
       },
     });
   });
+
+  it("uses the effective OpenRouter credential for an OpenRouter-backed OpenAI endpoint", () => {
+    const env = {
+      OPENROUTER_API_KEY: "or-key",
+      OPENAI_BASE_URL: "https://openrouter.ai/api/v1",
+    };
+    const envState = resolveEnvState({ env, envForRun: env, configForCli: null });
+
+    expect(
+      resolveProviderRuntimeBindings({ env, envState, configForCli: null }).apiKeys.openai,
+    ).toBe("or-key");
+  });
 });

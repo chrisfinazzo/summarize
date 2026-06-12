@@ -17,6 +17,7 @@ import {
 } from "../run/flows/asset/summary.js";
 import type { SummarizeAssetArgs } from "../run/flows/asset/types.js";
 import { createUrlFlowContext, type UrlFlowContext } from "../run/flows/url/types.js";
+import { resolveProviderRuntimeBindings } from "../run/provider-runtime.js";
 import { resolveRunContextState } from "../run/run-context.js";
 import { createRunMetrics } from "../run/run-metrics.js";
 import { resolveModelSelection } from "../run/run-models.js";
@@ -168,6 +169,19 @@ export function createDaemonUrlFlowContext(args: DaemonUrlFlowContextArgs): UrlF
   const embeddedVideoOverride = resolvedOverrides.embeddedVideoMode;
   const resolvedFormat = format === "markdown" ? "markdown" : "text";
 
+  const runContext = resolveRunContextState({
+    env: envForRun,
+    envForRun,
+    programOpts: {
+      videoMode: videoModeOverride ?? "auto",
+      embeddedVideo: embeddedVideoOverride ?? "auto",
+    },
+    languageExplicitlySet,
+    videoModeExplicitlySet: videoModeOverride != null,
+    embeddedVideoExplicitlySet: embeddedVideoOverride != null,
+    cliFlagPresent: false,
+    cliProviderArg: null,
+  });
   const {
     config,
     configPath,
@@ -207,18 +221,11 @@ export function createDaemonUrlFlowContext(args: DaemonUrlFlowContextArgs): UrlF
     ytDlpPath,
     ytDlpCookiesFromBrowser,
     falApiKey,
-  } = resolveRunContextState({
+  } = runContext;
+  const providerRuntime = resolveProviderRuntimeBindings({
     env: envForRun,
-    envForRun,
-    programOpts: {
-      videoMode: videoModeOverride ?? "auto",
-      embeddedVideo: embeddedVideoOverride ?? "auto",
-    },
-    languageExplicitlySet,
-    videoModeExplicitlySet: videoModeOverride != null,
-    embeddedVideoExplicitlySet: embeddedVideoOverride != null,
-    cliFlagPresent: false,
-    cliProviderArg: null,
+    envState: runContext,
+    configForCli,
   });
   const configForCliWithMagic = applyAutoCliFallbackOverrides(configForCli, resolvedOverrides);
   const allowAutoCliFallback = resolvedOverrides.autoCliFallbackEnabled === true;
@@ -266,30 +273,14 @@ export function createDaemonUrlFlowContext(args: DaemonUrlFlowContextArgs): UrlF
     timeoutMs,
     retries,
     streamingEnabled: true,
-    openaiUseChatCompletions,
     cliConfigForRun: cliConfigForRun ?? null,
     cliAvailability,
     trackedFetch: metrics.trackedFetch,
     resolveMaxOutputTokensForCall: metrics.resolveMaxOutputTokensForCall,
     resolveMaxInputTokensForCall: metrics.resolveMaxInputTokensForCall,
     llmCalls: metrics.llmCalls,
-    apiKeys: {
-      xaiApiKey,
-      openaiApiKey: apiKey,
-      googleApiKey,
-      anthropicApiKey,
-      openrouterApiKey,
-    },
-    keyFlags: {
-      googleConfigured,
-      anthropicConfigured,
-      openrouterConfigured,
-    },
-    zai: { apiKey: zaiApiKey, baseUrl: zaiBaseUrl },
-    nvidia: { apiKey: nvidiaApiKey, baseUrl: nvidiaBaseUrl },
-    minimax: { apiKey: minimaxApiKey, baseUrl: minimaxBaseUrl },
-    ollama: { baseUrl: ollamaBaseUrl },
-    providerBaseUrls,
+    providerRuntime,
+    openrouterApiKey,
   });
   const summaryStream = createDaemonSummaryStreamHandler(stdoutSink);
 

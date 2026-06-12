@@ -30,7 +30,7 @@ export function resolveProviderRuntimeBindings({
   return {
     apiKeys: {
       xai: envState.xaiApiKey,
-      openai: envState.openaiApiKey,
+      openai: envState.apiKey,
       google: envState.googleApiKey,
       anthropic: envState.anthropicApiKey,
       zai: envState.zaiApiKey,
