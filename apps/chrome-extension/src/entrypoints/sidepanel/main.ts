@@ -1,4 +1,3 @@
-import type { Message } from "@earendil-works/pi-ai";
 import MarkdownIt from "markdown-it";
 import type { BgToPanel, PanelToBg } from "../../lib/panel-contracts";
 import type { SseSlidesData } from "../../lib/runtime-contracts";
@@ -11,18 +10,10 @@ import {
 import { splitSummaryFromSlides } from "../../lib/slides-text";
 import { generateToken } from "../../lib/token";
 import { createAppearanceControls } from "./appearance-controls";
-import { createAutomationRuntime } from "./automation-runtime";
 import { createSidepanelBgMessageRuntime } from "./bg-message-runtime";
 import { bindSidepanelUiEvents } from "./bindings";
 import { bootstrapSidepanel } from "./bootstrap-runtime";
-import { ChatController } from "./chat-controller";
-import { createChatHistoryRuntime } from "./chat-history-runtime";
-import { createChatHistoryStore, normalizeStoredMessage } from "./chat-history-store";
-import { createChatQueueRuntime } from "./chat-queue-runtime";
-import { createChatSession } from "./chat-session";
-import { type ChatHistoryLimits } from "./chat-state";
-import { createChatStreamRuntime } from "./chat-stream-runtime";
-import { createChatUiRuntime } from "./chat-ui-runtime";
+import { createSidepanelChatRuntime } from "./chat-runtime";
 import { createSidepanelDom } from "./dom";
 import { createErrorController } from "./error-controller";
 import { createHeaderController } from "./header-controller";
@@ -47,7 +38,7 @@ import { createSummaryStreamRuntime } from "./summary-stream-runtime";
 import { createSummaryViewRuntime } from "./summary-view-runtime";
 import { registerSidepanelTestHooks } from "./test-hooks";
 import { parseTimestampHref } from "./timestamp-links";
-import type { ChatMessage, PanelPhase, UiState } from "./types";
+import type { PanelPhase, UiState } from "./types";
 import { createTypographyController } from "./typography-controller";
 import { createUiStateRuntime } from "./ui-state-runtime";
 
@@ -179,13 +170,6 @@ const { handleLocalSlidesResponse, resolveLocalSlides, send, sendRaw } = panelMe
 
 let autoKickTimer = 0;
 
-const MAX_CHAT_MESSAGES = 1000;
-const MAX_CHAT_CHARACTERS = 160_000;
-const MAX_CHAT_QUEUE = 10;
-const chatLimits: ChatHistoryLimits = {
-  maxMessages: MAX_CHAT_MESSAGES,
-  maxChars: MAX_CHAT_CHARACTERS,
-};
 let slidesRenderer: {
   applyLayout: () => void;
   clear: () => void;
@@ -211,31 +195,6 @@ const slidesTextController = createSlidesTextController({
   getSlidesOcrEnabled: () => getSlidesState().slidesOcrEnabled,
 });
 
-const chatHistoryStore = createChatHistoryStore({ chatLimits });
-
-const chatController = new ChatController({
-  messagesEl: chatMessagesEl,
-  inputEl: chatInputEl,
-  sendBtn: chatSendBtn,
-  contextEl: chatContextStatusEl,
-  markdown: md,
-  limits: chatLimits,
-  panelState,
-  dispatchPanelState: panelStateStore.dispatch,
-  scrollToBottom: () => scrollToBottom(),
-  onNewContent: () => {
-    renderInlineSlides(chatMessagesEl);
-  },
-});
-const chatHistoryRuntime = createChatHistoryRuntime({
-  chatController,
-  chatHistoryStore,
-  chatLimits,
-  normalizeStoredMessage,
-  requestChatHistory: (summary) => chatSession.requestChatHistory(summary),
-  getActiveUrl: getActiveTabUrl,
-});
-
 function showSlideNotice(message: string, opts?: { allowRetry?: boolean }) {
   slideNoticeMessageEl.textContent = message;
   slideNoticeRetryBtn.hidden = !opts?.allowRetry;
@@ -257,45 +216,6 @@ function stopSlidesStream() {
 function setSlidesTranscriptTimedText(value: string | null) {
   slidesTextController.setTranscriptTimedText(value);
 }
-
-function wrapMessage(message: Message): ChatMessage {
-  return { ...message, id: crypto.randomUUID() };
-}
-
-const chatSession = createChatSession({
-  hideReplOverlay: () => automationRuntime.hideReplOverlayForActiveTab(),
-  send: async (message) => send(message),
-  setStatus: (text) => headerController.setStatus(text),
-});
-
-const automationRuntime = createAutomationRuntime({
-  panelState,
-  dispatchPanelState: panelStateStore.dispatch,
-  automationNoticeActionBtn,
-  automationNoticeEl,
-  automationNoticeMessageEl,
-  automationNoticeTitleEl,
-  chatController,
-  getActiveTabId,
-  getChatSession: () => chatSession,
-  getNavigationRuntime: () => navigationRuntime,
-  scrollToBottom,
-  wrapMessage,
-});
-
-chatMessagesEl.addEventListener("click", (event) => {
-  const target = event.target as HTMLElement | null;
-  if (!target) return;
-  const link = target.closest("a.chatTimestamp") as HTMLAnchorElement | null;
-  if (!link) return;
-  const href = link.getAttribute("href") ?? "";
-  if (!href.startsWith("timestamp:")) return;
-  event.preventDefault();
-  event.stopPropagation();
-  const seconds = parseTimestampHref(href);
-  if (seconds == null) return;
-  void send({ type: "panel:seek", seconds });
-});
 
 renderEl.addEventListener("click", (event) => {
   const target = event.target as HTMLElement | null;
@@ -374,13 +294,6 @@ const errorController = createErrorController({
   onOpenLogs: () => openOptionsTab("logs"),
   onPanelVisibilityChange: () => headerController.updateHeaderOffset(),
 });
-const chatQueueRuntime = createChatQueueRuntime({
-  chatQueueEl,
-  maxQueue: MAX_CHAT_QUEUE,
-  setStatus: (value) => {
-    headerController.setStatus(value);
-  },
-});
 
 slideNoticeRetryBtn.addEventListener("click", () => {
   retrySlidesStream();
@@ -428,28 +341,65 @@ const navigationRuntime = createNavigationRuntime({
   },
 });
 
-async function migrateChatHistory(
-  fromTabId: number | null,
-  toTabId: number | null,
-  toUrl: string | null,
-) {
-  if (!fromTabId || !toTabId || fromTabId === toTabId) return;
-  const messages = chatController.getMessages();
-  if (messages.length === 0) return;
-  await chatHistoryStore.persist(toTabId, messages, true, toUrl);
-}
+const chatRuntime = createSidepanelChatRuntime({
+  panelState,
+  dispatchPanelState: panelStateStore.dispatch,
+  markdown: md,
+  mainEl,
+  renderEl,
+  chatContainerEl,
+  chatContextStatusEl,
+  chatDockEl,
+  chatInputEl,
+  chatJumpBtn,
+  chatMessagesEl,
+  chatQueueEl,
+  chatSendBtn,
+  automationNoticeActionBtn,
+  automationNoticeEl,
+  automationNoticeMessageEl,
+  automationNoticeTitleEl,
+  getActiveTabId,
+  getActiveTabUrl,
+  getNavigationRuntime: () => navigationRuntime,
+  send,
+  setStatus: (value) => {
+    headerController.setStatus(value);
+  },
+  clearErrors: () => {
+    errorController.clearAll();
+  },
+  showInlineError: (message) => {
+    errorController.showInlineError(message);
+  },
+  clearChatMetrics: () => {
+    metricsController.clearForMode("chat");
+  },
+  setChatMetricsMode: () => {
+    metricsController.setActiveMode("chat");
+  },
+  setLastActionChat: () => {
+    updatePanelSession({ lastAction: "chat" });
+  },
+  renderInlineSlides: () => {
+    renderInlineSlides(chatMessagesEl);
+  },
+  seekToTimestamp: (seconds) => {
+    void send({ type: "panel:seek", seconds });
+  },
+});
 
 const syncWithActiveTab = () => navigationRuntime.syncWithActiveTab();
 
 async function clearCurrentView() {
   panelStateStore.dispatch({ type: "retained-slide-summary", value: null });
   if (panelState.chat.streaming) {
-    automationRuntime.requestAbort("Cleared");
+    chatRuntime.requestAbort("Cleared");
   }
   streamController.abort();
   stopSlidesStream();
   resetSummaryView({ preserveChat: false });
-  await clearChatHistoryForActiveTab();
+  await chatRuntime.clearHistoryForActiveTab();
   panelCacheController.scheduleSync();
   headerController.setStatus("");
   setPhase("idle");
@@ -483,7 +433,7 @@ const summaryViewRuntime = createSummaryViewRuntime({
     },
   stopSlidesStream,
   refreshSummarizeControl,
-  resetChatState,
+  resetChatState: chatRuntime.reset,
   setSlidesTranscriptTimedText,
   getSlidesSummaryState: () => ({
     runId: slidesSummaryController.getRunId(),
@@ -538,7 +488,6 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 
 let slidesViewRuntime: ReturnType<typeof createSlidesViewRuntime> | null = null;
-let chatUiRuntime: ReturnType<typeof createChatUiRuntime> | null = null;
 
 function renderEmptySummaryState() {
   slidesViewRuntime?.renderEmptySummaryState();
@@ -689,30 +638,6 @@ function renderInlineSlides(container: HTMLElement, opts?: { fallback?: boolean 
   slidesViewRuntime.renderInlineSlides(container, opts);
 }
 
-function applyChatEnabled() {
-  chatUiRuntime?.applyChatEnabled();
-}
-
-async function clearChatHistoryForActiveTab() {
-  await chatUiRuntime?.clearChatHistoryForActiveTab();
-}
-
-async function persistChatHistory() {
-  await chatUiRuntime?.persistChatHistory();
-}
-
-function resetChatState() {
-  chatUiRuntime?.resetChatState();
-}
-
-async function restoreChatHistory() {
-  await chatUiRuntime?.restoreChatHistory();
-}
-
-function scrollToBottom(force = false) {
-  chatUiRuntime?.scrollToBottom(force);
-}
-
 const LINE_HEIGHT_STEP = 0.1;
 
 const appearanceControls = createAppearanceControls({
@@ -742,35 +667,6 @@ const plannedSlidesRuntime = createPlannedSlidesRuntime({
   updateSlidesTextState,
   queueSlidesRender,
   schedulePanelCacheSync: (delayMs) => panelCacheController.scheduleSync(delayMs),
-});
-
-chatUiRuntime = createChatUiRuntime({
-  mainEl,
-  chatJumpBtn,
-  chatInputEl,
-  chatDockEl,
-  chatContainerEl,
-  chatDockContainerEl: chatDockEl,
-  renderEl,
-  getChatEnabled: () => getPanelSession().chatEnabled,
-  getActiveTabId,
-  getSummaryMarkdown: () => panelState.summaryMarkdown,
-  clearMetrics: () => {
-    metricsController.clearForMode("chat");
-  },
-  clearQueuedMessages: () => {
-    chatQueueRuntime.clearQueuedMessages();
-  },
-  clearHistory: (tabId) => chatHistoryRuntime.clear(tabId),
-  loadHistory: (tabId) => chatHistoryRuntime.load(tabId),
-  persistHistory: (tabId, chatEnabled) => chatHistoryRuntime.persist(tabId, chatEnabled),
-  restoreHistory: (tabId, summaryMarkdown) => chatHistoryRuntime.restore(tabId, summaryMarkdown),
-  resetChatController: () => {
-    chatController.reset();
-  },
-  resetChatSession: () => {
-    chatSession.reset();
-  },
 });
 
 const setupControlsRuntime = createSetupControlsRuntime({
@@ -934,11 +830,9 @@ const summaryRunRuntime = createSummaryRunRuntime({
     updateTextState: updateSlidesTextState,
   },
   chat: {
-    clearHistory: clearChatHistoryForActiveTab,
-    finishStreamingMessage: () => {
-      chatStreamRuntime.finishStreamingMessage();
-    },
-    reset: resetChatState,
+    clearHistory: chatRuntime.clearHistoryForActiveTab,
+    finishStreamingMessage: chatRuntime.finishStreamingMessage,
+    reset: chatRuntime.reset,
     shouldPreserveForRun: navigationRuntime.shouldPreserveChatForRun,
   },
   view: {
@@ -963,10 +857,10 @@ const uiStateRuntime = createUiStateRuntime({
   clearInlineError: () => {
     errorController.clearInlineError();
   },
-  requestAgentAbort: automationRuntime.requestAbort,
-  clearChatHistoryForActiveTab,
-  resetChatState,
-  migrateChatHistory,
+  requestAgentAbort: chatRuntime.requestAbort,
+  clearChatHistoryForActiveTab: chatRuntime.clearHistoryForActiveTab,
+  resetChatState: chatRuntime.reset,
+  migrateChatHistory: chatRuntime.migrateHistory,
   maybeStartPendingSummaryRunForUrl: summaryRunRuntime.maybeStartPendingForUrl,
   maybeStartPendingSlidesForUrl,
   requestSlidesCapture: () => {
@@ -978,11 +872,11 @@ const uiStateRuntime = createUiStateRuntime({
   abortSummaryStream: () => {
     streamController.abort();
   },
-  hideAutomationNotice: automationRuntime.hideNotice,
+  hideAutomationNotice: chatRuntime.hideAutomationNotice,
   hideSlideNotice,
   maybeApplyPendingSlidesSummary,
-  applyChatEnabled,
-  restoreChatHistory,
+  applyChatEnabled: chatRuntime.applyEnabled,
+  restoreChatHistory: chatRuntime.restoreHistory,
   rebuildSlideDescriptions,
   renderInlineSlides,
   setSlidesLayout: (value) => {
@@ -1018,9 +912,7 @@ const bgMessageRuntime = createSidepanelBgMessageRuntime({
   },
   isStreaming,
   setPhase,
-  finishStreamingMessage: () => {
-    chatStreamRuntime.finishStreamingMessage();
-  },
+  finishStreamingMessage: chatRuntime.finishStreamingMessage,
   setSlidesBusy,
   showSlideNotice,
   getActiveTabUrl,
@@ -1067,15 +959,9 @@ const bgMessageRuntime = createSidepanelBgMessageRuntime({
   applySummarySnapshot: (payload) => {
     summaryRunRuntime.applySnapshot(payload);
   },
-  handleChatHistory: (chatHistory) => {
-    chatSession.handleChatHistoryResponse(chatHistory as never);
-  },
-  handleAgentChunk: (chunk) => {
-    chatSession.handleAgentChunk(chunk as never);
-  },
-  handleAgentResponse: (response) => {
-    chatSession.handleAgentResponse(response as never);
-  },
+  handleChatHistory: chatRuntime.handleHistory,
+  handleAgentChunk: chatRuntime.handleAgentChunk,
+  handleAgentResponse: chatRuntime.handleAgentResponse,
 });
 
 function handleBgMessage(msg: BgToPanel) {
@@ -1102,9 +988,7 @@ const interactionRuntime = createSidepanelInteractionRuntime({
     errorController.clearInlineError();
   },
   getInputModeOverride: () => getSlidesState().inputModeOverride,
-  retryChat: () => {
-    chatStreamRuntime.retryChat();
-  },
+  retryChat: chatRuntime.retry,
   chatEnabled: () => getPanelSession().chatEnabled,
   getRawChatInput: () => chatInputEl.value,
   clearChatInput: () => {
@@ -1119,14 +1003,10 @@ const interactionRuntime = createSidepanelInteractionRuntime({
     chatInputEl.style.height = value;
   },
   isChatStreaming: () => panelState.chat.streaming,
-  getQueuedChatCount: () => chatQueueRuntime.getQueueLength(),
-  enqueueChatMessage: (value) => chatQueueRuntime.enqueueChatMessage(value),
-  maybeSendQueuedChat: () => {
-    chatStreamRuntime.maybeSendQueuedChat();
-  },
-  startChatMessage: (value) => {
-    chatStreamRuntime.startChatMessage(value);
-  },
+  getQueuedChatCount: chatRuntime.getQueueLength,
+  enqueueChatMessage: chatRuntime.enqueueMessage,
+  maybeSendQueuedChat: chatRuntime.maybeSendQueuedMessage,
+  startChatMessage: chatRuntime.startMessage,
   typographyController,
   patchSettings,
   updateModelRowUI,
@@ -1177,45 +1057,6 @@ summarizeControlRuntime = createSummarizeControlRuntime({
   applySlidesRendererLayout: () => {
     slidesRenderer?.applyLayout();
   },
-});
-
-const chatStreamRuntime = createChatStreamRuntime({
-  chatEnabled: () => getPanelSession().chatEnabled,
-  isChatStreaming: () => panelState.chat.streaming,
-  setChatStreaming: (value) => {
-    panelStateStore.dispatch({ type: "chat-streaming", value });
-  },
-  hasUserMessages: () => chatController.hasUserMessages(),
-  addUserMessage: (text) => {
-    chatController.addMessage(wrapMessage({ role: "user", content: text, timestamp: Date.now() }));
-  },
-  dequeueQueuedMessage: chatQueueRuntime.dequeueQueuedMessage,
-  getQueuedChatCount: chatQueueRuntime.getQueueLength,
-  renderChatQueue: chatQueueRuntime.renderChatQueue,
-  focusInput: () => {
-    chatInputEl.focus();
-  },
-  clearErrors: () => {
-    errorController.clearAll();
-  },
-  resetAbort: () => {
-    chatSession.resetAbort();
-  },
-  metricsSetChatMode: () => {
-    metricsController.setActiveMode("chat");
-  },
-  setLastActionChat: () => {
-    updatePanelSession({ lastAction: "chat" });
-  },
-  scrollToBottom,
-  persistChatHistory,
-  setStatus: (value) => {
-    headerController.setStatus(value);
-  },
-  showInlineError: (message) => {
-    errorController.showInlineError(message);
-  },
-  executeAgentLoop: automationRuntime.runAgentLoop,
 });
 
 function retryLastAction() {
@@ -1271,9 +1112,9 @@ bootstrapSidepanel({
   setSlidesLayoutInputValue: (value) => {
     slidesLayoutEl.value = value;
   },
-  hideAutomationNotice: automationRuntime.hideNotice,
+  hideAutomationNotice: chatRuntime.hideAutomationNotice,
   appearanceControls,
-  applyChatEnabled,
+  applyChatEnabled: chatRuntime.applyEnabled,
   applySlidesLayout,
   setDefaultModelPresets,
   setModelValue,
