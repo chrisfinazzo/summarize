@@ -18,7 +18,7 @@ vi.mock("../src/slides/index.js", async () => {
   };
 });
 
-import { runUrlFlow } from "../src/run/flows/url/flow.js";
+import { executeUrlFlow } from "../src/run/flows/url/flow.js";
 import * as slidesModule from "../src/slides/index.js";
 
 const extractSlidesForSource = vi.mocked(slidesModule.extractSlidesForSource);
@@ -99,7 +99,7 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
-describe("runUrlFlow slides done hook", () => {
+describe("executeUrlFlow slides done hook", () => {
   it("emits a planned slide timeline before video extraction resolves", async () => {
     const root = mkdtempSync(join(tmpdir(), "summarize-planned-slides-"));
     const url = "https://www.youtube.com/watch?v=abc123def45";
@@ -248,7 +248,7 @@ describe("runUrlFlow slides done hook", () => {
 
     ctx.flags.extractMode = true;
 
-    await runUrlFlow({ ctx, url, isYoutubeUrl: true });
+    await executeUrlFlow({ ctx, url, isYoutubeUrl: true });
 
     await waitForResult(() => doneResult);
     expect(doneResult?.ok).toBe(true);
@@ -316,7 +316,7 @@ describe("runUrlFlow slides done hook", () => {
 
     ctx.flags.extractMode = true;
 
-    await runUrlFlow({ ctx, url, isYoutubeUrl: true });
+    await executeUrlFlow({ ctx, url, isYoutubeUrl: true });
 
     await waitForResult(() => doneResult);
     expect(doneResult?.ok).toBe(false);

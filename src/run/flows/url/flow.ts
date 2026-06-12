@@ -1,4 +1,3 @@
-import { toUrlSummaryPresentationResolution } from "../../../application/url-result.js";
 import type { ExtractedLinkContent } from "../../../content/index.js";
 import { buildUrlPrompt } from "../../../engine/web-prompt.js";
 import type { UrlSummaryResolution } from "../../../engine/web-summary.js";
@@ -23,25 +22,14 @@ import { deriveExtractionUi, logExtractionDiagnostics } from "./extract.js";
 import { createUrlExtractionSession } from "./extraction-session.js";
 import { createUrlFlowProgress, writeSlidesBackgroundFailureWarning } from "./flow-progress.js";
 import { createMarkdownConverters } from "./markdown.js";
-import type { SlidesTerminalOutput } from "./slides-output.js";
 import { createUrlSlidesSession } from "./slides-session.js";
-import {
-  executeExtractedUrlSummary,
-  outputExtractedUrl,
-  presentExtractedUrlSummary,
-} from "./summary.js";
+import { executeExtractedUrlSummary } from "./summary.js";
 import type { UrlFlowContext } from "./types.js";
 import { handleVideoOnlyExtractedContent } from "./video-only.js";
 
 type UrlFlowResultBase = {
   extracted: ExtractedLinkContent;
   slides: SlideExtractionResult | null;
-};
-
-type UrlFlowPresentationState = {
-  extractionUi: ReturnType<typeof deriveExtractionUi>;
-  transcriptionCostLabel: string | null;
-  slidesOutput: SlidesTerminalOutput | null;
 };
 
 export type UrlFlowResult =
@@ -63,22 +51,14 @@ export type UrlFlowResult =
       resolution: UrlSummaryResolution;
     });
 
-async function runUrlFlowPhases({
+export async function executeUrlFlow({
   ctx,
   url,
   isYoutubeUrl,
-  onResult,
 }: {
   ctx: UrlFlowContext;
   url: string;
   isYoutubeUrl: boolean;
-  onResult?:
-    | ((
-        ctx: UrlFlowContext,
-        result: UrlFlowResult,
-        presentation: UrlFlowPresentationState | null,
-      ) => Promise<void>)
-    | null;
 }): Promise<UrlFlowResult> {
   if (!url) {
     throw new Error("Only HTTP and HTTPS URLs can be summarized");
@@ -160,14 +140,6 @@ async function runUrlFlowPhases({
   } = createUrlFlowProgress({ ctx: mediaCtx, theme });
   const flowCtx = progressHooks === hooks ? mediaCtx : { ...mediaCtx, hooks: progressHooks };
   const activeHooks = flowCtx.hooks;
-  const complete = async (
-    result: UrlFlowResult,
-    presentation: UrlFlowPresentationState | null,
-    presentationContext = flowCtx,
-  ) => {
-    await onResult?.(presentationContext, result, presentation);
-    return result;
-  };
 
   const extractionSession = createUrlExtractionSession({
     ctx: flowCtx,
@@ -273,16 +245,12 @@ async function runUrlFlowPhases({
       accent: theme.accent,
     });
     if (videoOnlyResult.handled) {
-      const result = await complete(
-        {
-          kind: "delegated-summary",
-          extracted: videoOnlyResult.extracted,
-          slides: videoOnlyResult.slides,
-          summary: videoOnlyResult.summary,
-        },
-        null,
-      );
-      return result;
+      return {
+        kind: "delegated-summary",
+        extracted: videoOnlyResult.extracted,
+        slides: videoOnlyResult.slides,
+        summary: videoOnlyResult.summary,
+      };
     }
     extracted = videoOnlyResult.extracted;
     extractionUi = videoOnlyResult.extractionUi;
@@ -363,25 +331,15 @@ async function runUrlFlowPhases({
             },
           },
         };
-        extractionUi = deriveExtractionUi(extractedForOutput);
       }
-      const result = await complete(
-        {
-          kind: "extraction",
-          url,
-          extracted: extractedForOutput,
-          prompt,
-          effectiveMarkdownMode: markdown.effectiveMarkdownMode,
-          slides: slidesSession.getSlidesExtracted() ?? slidesForPrompt ?? null,
-        },
-        {
-          extractionUi,
-          transcriptionCostLabel,
-          slidesOutput: slidesSession.slidesOutput,
-        },
-        ctx,
-      );
-      return result;
+      return {
+        kind: "extraction",
+        url,
+        extracted: extractedForOutput,
+        prompt,
+        effectiveMarkdownMode: markdown.effectiveMarkdownMode,
+        slides: slidesSession.getSlidesExtracted() ?? slidesForPrompt ?? null,
+      };
     }
 
     const onModelChosen = (modelId: string) => {
@@ -400,23 +358,15 @@ async function runUrlFlowPhases({
       slidesOutput: slidesSession.slidesOutput,
     });
     ctx.perfTrace?.mark("url:summary-done");
-    const result = await complete(
-      {
-        kind: "summary",
-        url,
-        extracted,
-        prompt,
-        effectiveMarkdownMode: markdown.effectiveMarkdownMode,
-        resolution,
-        slides: slidesSession.getSlidesExtracted() ?? slidesForPrompt ?? null,
-      },
-      {
-        extractionUi,
-        transcriptionCostLabel,
-        slidesOutput: slidesSession.slidesOutput,
-      },
-    );
-    return result;
+    return {
+      kind: "summary",
+      url,
+      extracted,
+      prompt,
+      effectiveMarkdownMode: markdown.effectiveMarkdownMode,
+      resolution,
+      slides: slidesSession.getSlidesExtracted() ?? slidesForPrompt ?? null,
+    };
   } finally {
     if (backgroundSlidesPromise) {
       await backgroundSlidesPromise;
@@ -429,60 +379,4 @@ async function runUrlFlowPhases({
     stopProgress();
     await sharedMediaScope?.cleanup();
   }
-}
-
-export async function executeUrlFlow(options: {
-  ctx: UrlFlowContext;
-  url: string;
-  isYoutubeUrl: boolean;
-}): Promise<UrlFlowResult> {
-  return runUrlFlowPhases(options);
-}
-
-async function presentUrlFlowResult(
-  ctx: UrlFlowContext,
-  result: UrlFlowResult,
-  presentation: UrlFlowPresentationState | null,
-) {
-  if (result.kind === "delegated-summary") return;
-  if (!presentation) {
-    throw new Error("Internal error: missing URL presentation state");
-  }
-  if (result.kind === "extraction") {
-    await outputExtractedUrl({
-      ctx,
-      url: result.url,
-      extracted: result.extracted,
-      extractionUi: presentation.extractionUi,
-      prompt: result.prompt,
-      effectiveMarkdownMode: result.effectiveMarkdownMode,
-      transcriptionCostLabel: presentation.transcriptionCostLabel,
-      slides: result.slides,
-      slidesOutput: presentation.slidesOutput,
-    });
-    return;
-  }
-  await presentExtractedUrlSummary({
-    ctx,
-    url: result.url,
-    extracted: result.extracted,
-    extractionUi: presentation.extractionUi,
-    prompt: result.prompt,
-    effectiveMarkdownMode: result.effectiveMarkdownMode,
-    transcriptionCostLabel: presentation.transcriptionCostLabel,
-    resolution: toUrlSummaryPresentationResolution(result.resolution),
-    slides: result.slides,
-    slidesOutput: presentation.slidesOutput,
-  });
-}
-
-export async function runUrlFlow(options: {
-  ctx: UrlFlowContext;
-  url: string;
-  isYoutubeUrl: boolean;
-}): Promise<UrlFlowResult> {
-  return runUrlFlowPhases({
-    ...options,
-    onResult: presentUrlFlowResult,
-  });
 }

@@ -179,7 +179,7 @@ export function createUrlFlowContext(options: {
 }
 
 /**
- * Wiring struct for `runUrlFlow`.
+ * Wiring struct for `executeUrlFlow`.
  * CLI runner populates the full surface; daemon uses a smaller subset (no TTY/progress/footer),
  * but both share the same extraction/cache/model logic.
  */

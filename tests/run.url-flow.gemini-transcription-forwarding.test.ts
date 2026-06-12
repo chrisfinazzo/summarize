@@ -20,13 +20,13 @@ vi.mock("../src/content/index.js", () => ({
   createLinkPreviewClient: mocks.createLinkPreviewClient,
 }));
 
-import { runUrlFlow } from "../src/run/flows/url/flow.js";
+import { executeUrlFlow } from "../src/run/flows/url/flow.js";
 
 afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("runUrlFlow transcription wiring", () => {
+describe("executeUrlFlow transcription wiring", () => {
   it("forwards googleApiKey into link preview transcription config", async () => {
     const root = mkdtempSync(join(tmpdir(), "summarize-gemini-url-flow-"));
     const url = "https://www.youtube.com/watch?v=hhAbp3iQA44";
@@ -101,7 +101,7 @@ describe("runUrlFlow transcription wiring", () => {
     ctx.model.apiStatus.googleApiKey = "gemini-key";
     ctx.model.apiStatus.googleConfigured = true;
 
-    await runUrlFlow({ ctx, url, isYoutubeUrl: true });
+    await executeUrlFlow({ ctx, url, isYoutubeUrl: true });
 
     expect(mocks.createLinkPreviewClient).toHaveBeenCalledTimes(1);
     const options = mocks.createLinkPreviewClient.mock.calls[0]?.[0];
