@@ -22,6 +22,20 @@ import { resolveRunContextState, type RunContextState } from "./context.js";
 import { resolveRunModelSpec, type RunModelSpec } from "./model-runtime.js";
 import type { SummarizeRequest } from "./summarize-contracts.js";
 
+export type SummarizeRunInput =
+  | SummarizeRequest["input"]
+  | {
+      kind: "file";
+      filePath: string;
+    }
+  | {
+      kind: "stdin";
+    };
+
+export type SummarizeRunRequest = Omit<SummarizeRequest, "input"> & {
+  input: SummarizeRunInput;
+};
+
 function applyAutoCliFallbackOverrides(
   config: SummarizeConfig | null,
   overrides: RunOverrides,
@@ -88,7 +102,7 @@ function toPublicModelSpec(model: RunModelSpec): Omit<RunModelSpec, "configForMo
 }
 
 function createDefaultConfigInput(
-  request: SummarizeRequest,
+  request: SummarizeRunRequest,
   overrides: RunOverrides,
 ): RunConfigInput {
   const languageRaw = typeof request.languageRaw === "string" ? request.languageRaw : null;
@@ -106,10 +120,12 @@ export function resolveSummarizeRun({
   request,
   env,
   configInput,
+  useConfigPromptDefault = false,
 }: {
-  request: SummarizeRequest;
+  request: SummarizeRunRequest;
   env: Record<string, string | undefined>;
   configInput?: RunConfigInput | null;
+  useConfigPromptDefault?: boolean;
 }): ResolvedSummarizeRun {
   const envForRun = { ...env };
   const overrides = request.overrides ?? createEmptyRunOverrides();
@@ -141,7 +157,11 @@ export function resolveSummarizeRun({
     raw: request.languageRaw,
     fallback: context.outputLanguage,
   });
-  const promptOverride = request.promptOverride;
+  const promptOverride =
+    request.promptOverride ??
+    (useConfigPromptDefault && typeof context.config?.prompt === "string"
+      ? context.config.prompt.trim() || null
+      : null);
 
   return {
     spec: {

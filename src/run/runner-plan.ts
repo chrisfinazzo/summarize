@@ -1,12 +1,7 @@
 import type { Command } from "commander";
-import { createRunConfigInput } from "../application/config-state.js";
-import { resolveRunContextState } from "../application/context.js";
 import { createRunFlowContexts } from "../application/flow-contexts.js";
-import {
-  createExecutableRunModel,
-  createRunModelRuntime,
-  resolveRunModelSpec,
-} from "../application/model-runtime.js";
+import { createExecutableRunModel, createRunModelRuntime } from "../application/model-runtime.js";
+import { resolveSummarizeRun } from "../application/run-spec.js";
 import { type CacheState } from "../cache.js";
 import type { ExecFileFn } from "../markitdown.js";
 import { scopeTranscriptCacheForDiarization } from "../shared/transcript-diarization-cache-scope.js";
@@ -17,6 +12,7 @@ import {
   resolveTrueColor,
 } from "../tty/theme.js";
 import { createCacheStateFromConfig } from "./cache-state.js";
+import { createCliSummarizeResolution } from "./cli-summarize-request.js";
 import { parseCliProviderArg } from "./env.js";
 import { isPdfExtension, isTranscribableExtension } from "./flows/asset/input.js";
 import { summarizeMediaFile as summarizeMediaFileImpl } from "./flows/asset/media.js";
@@ -25,7 +21,6 @@ import { createMediaCacheFromConfig } from "./media-cache-state.js";
 import type { PerfTrace } from "./perf-trace.js";
 import { createProgressGate } from "./progress.js";
 import { resolveRunInput } from "./run-input.js";
-import { buildPromptLengthInstruction, resolveSummaryLength } from "./run-settings.js";
 import { resolveStreamSettings } from "./run-stream.js";
 import { createRunnerAssetInputContext } from "./runner-asset-context.js";
 import { executeRunnerInput } from "./runner-execution.js";
@@ -81,11 +76,14 @@ export async function createRunnerPlan(options: {
   const url = inputResolution.url;
 
   const runStartedAtMs = Date.now();
+  const flagResolution = resolveRunnerFlags({
+    normalizedArgv,
+    programOpts,
+    envForRun,
+    url: inputTarget.kind === "url" ? inputTarget.url : url,
+  });
   const {
-    videoModeExplicitlySet,
-    embeddedVideoExplicitlySet,
     lengthExplicitlySet,
-    languageExplicitlySet,
     noCacheFlag,
     noMediaCacheFlag,
     extractMode,
@@ -104,23 +102,16 @@ export async function createRunnerPlan(options: {
     isYoutubeUrl,
     format,
     youtubeMode,
-    lengthArg: requestedLengthArg,
     maxOutputTokensArg,
     timeoutMs,
     retries,
     preprocessMode,
-    requestedFirecrawlMode,
     markdownMode,
     metricsEnabled,
     metricsDetailed,
     shouldComputeReport,
     markdownModeExplicitlySet,
-  } = resolveRunnerFlags({
-    normalizedArgv,
-    programOpts,
-    envForRun,
-    url: inputTarget.kind === "url" ? inputTarget.url : url,
-  });
+  } = flagResolution;
   perfTrace?.mark("plan:flags");
 
   if (extractMode && lengthExplicitlySet && !json && isRichTty(stderr)) {
@@ -147,41 +138,33 @@ export async function createRunnerPlan(options: {
       ? "auto"
       : modelArg;
 
-  const runContext = resolveRunContextState({
-    env,
-    envForRun,
-    configInput: createRunConfigInput({
-      languageRaw:
-        typeof programOpts.language === "string"
-          ? programOpts.language
-          : typeof programOpts.lang === "string"
-            ? programOpts.lang
-            : null,
-      languageExplicit: languageExplicitlySet,
-      videoModeRaw: typeof programOpts.videoMode === "string" ? programOpts.videoMode : "auto",
-      videoModeExplicit: videoModeExplicitlySet,
-      embeddedVideoModeRaw:
-        typeof programOpts.embeddedVideo === "string" ? programOpts.embeddedVideo : "auto",
-      embeddedVideoModeExplicit: embeddedVideoExplicitlySet,
-      cliFlagPresent,
-      cliProvider: cliProviderArg,
-      fast: programOpts.fast === true,
-      serviceTierRaw: typeof programOpts.serviceTier === "string" ? programOpts.serviceTier : null,
-      thinkingRaw: typeof programOpts.thinking === "string" ? programOpts.thinking : null,
-    }),
+  const summarizeResolution = createCliSummarizeResolution({
+    input: inputTarget,
+    programOpts,
+    flags: flagResolution,
+    cliFlagPresent,
+    cliProvider: cliProviderArg,
+    modelOverride: explicitModelArg,
+    promptOverride,
   });
+  const resolvedRun = resolveSummarizeRun({
+    request: summarizeResolution.request,
+    env,
+    configInput: summarizeResolution.configInput,
+    useConfigPromptDefault: true,
+  });
+  Object.assign(envForRun, resolvedRun.bindings.envForRun);
+  const runContext = resolvedRun.bindings.context;
+  const runSpec = resolvedRun.spec;
   const {
     config,
     configPath,
-    outputLanguage,
-    videoMode,
-    embeddedVideoMode,
-    configForCli,
     openaiRequestOptions,
     openaiRequestOptionsOverride,
     cliReasoningEffortOverride,
-    configModelLabel,
   } = runContext;
+  const { configModelLabel } = runSpec;
+  promptOverride = runSpec.promptOverride;
   perfTrace?.mark("plan:context");
 
   const themeName = resolveThemeNameFromSources({
@@ -190,12 +173,6 @@ export async function createRunnerPlan(options: {
     config: config?.ui?.theme,
   });
   envForRun.SUMMARIZE_THEME = themeName;
-  if (!promptOverride && typeof config?.prompt === "string" && config.prompt.trim().length > 0) {
-    promptOverride = config.prompt.trim();
-  }
-  const lengthArg = lengthExplicitlySet
-    ? requestedLengthArg
-    : resolveSummaryLength(config?.output?.length).lengthArg;
 
   const slidesSettings = resolveRunnerSlidesSettings({
     normalizedArgv,
@@ -219,12 +196,6 @@ export async function createRunnerPlan(options: {
     identifyOverride: speakerIdentificationOverride,
     remember: rememberSpeakers,
   });
-
-  const lengthInstruction = promptOverride ? buildPromptLengthInstruction(lengthArg) : null;
-  const languageInstruction =
-    promptOverride && outputLanguage.kind === "fixed"
-      ? `Output should be ${outputLanguage.label}.`
-      : null;
 
   const transcriptNamespace = `yt:${youtubeMode}`;
   let cacheState = await createCacheStateFromConfig({
@@ -262,14 +233,6 @@ export async function createRunnerPlan(options: {
     );
   }
 
-  const modelSpec = resolveRunModelSpec({
-    context: runContext,
-    envForRun,
-    explicitModelArg,
-    configForSelection: configForCli,
-    lengthArg,
-    maxOutputTokensArg,
-  });
   const verboseColor = supportsColor(stderr, envForRun);
   const themeForStderr = createThemeRenderer({
     themeName,
@@ -319,9 +282,9 @@ export async function createRunnerPlan(options: {
     metricsEnv: env,
     fetchImpl,
     execFileImpl,
-    maxOutputTokensArg,
-    timeoutMs,
-    retries,
+    maxOutputTokensArg: runSpec.maxOutputTokensArg,
+    timeoutMs: runSpec.timeoutMs,
+    retries: runSpec.retries,
     streamingEnabled,
     requestOptions: {
       openaiRequestOptions,
@@ -344,10 +307,10 @@ export async function createRunnerPlan(options: {
       })
     : null;
   const model = createExecutableRunModel({
-    spec: modelSpec,
+    spec: resolvedRun.bindings.model,
     runtime: modelRuntime,
     context: runContext,
-    allowAutoCliFallback: false,
+    allowAutoCliFallback: runSpec.allowAutoCliFallback,
     summaryStream,
     requestOptions: {
       openaiRequestOptions,
@@ -387,27 +350,27 @@ export async function createRunnerPlan(options: {
       fetch: trackedFetch,
     },
     flags: {
-      timeoutMs,
+      timeoutMs: runSpec.timeoutMs,
       maxExtractCharacters: extractMode ? maxExtractCharacters : null,
-      retries,
-      format,
-      markdownMode,
-      preprocessMode,
-      youtubeMode,
-      firecrawlMode: requestedFirecrawlMode,
-      videoMode,
-      embeddedVideoMode,
+      retries: runSpec.retries,
+      format: runSpec.format,
+      markdownMode: runSpec.markdownMode,
+      preprocessMode: runSpec.preprocessMode,
+      youtubeMode: runSpec.youtubeMode,
+      firecrawlMode: runSpec.firecrawlMode,
+      videoMode: runSpec.videoMode,
+      embeddedVideoMode: runSpec.embeddedVideoMode,
       transcriptTimestamps,
-      transcriptDiarization: diarizationMode,
+      transcriptDiarization: runSpec.transcriptDiarization,
       speakerIdentification,
-      outputLanguage,
-      lengthArg,
-      forceSummary,
-      promptOverride,
-      lengthInstruction,
-      languageInstruction,
+      outputLanguage: runSpec.outputLanguage,
+      lengthArg: runSpec.lengthArg,
+      forceSummary: runSpec.forceSummary,
+      promptOverride: runSpec.promptOverride,
+      lengthInstruction: runSpec.lengthInstruction,
+      languageInstruction: runSpec.languageInstruction,
       summaryCacheBypass: noCacheFlag,
-      maxOutputTokensArg,
+      maxOutputTokensArg: runSpec.maxOutputTokensArg,
       json,
       extractMode,
       metricsEnabled,
