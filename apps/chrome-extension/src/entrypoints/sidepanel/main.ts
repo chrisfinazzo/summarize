@@ -38,12 +38,7 @@ import { createPanelCacheController, type PanelCachePayload } from "./panel-cach
 import { createPanelMessagingRuntime } from "./panel-messaging";
 import { createPanelStateStore } from "./panel-state-store";
 import { createPlannedSlidesRuntime } from "./planned-slides-runtime";
-import {
-  normalizePanelUrl,
-  panelUrlsMatch,
-  shouldAcceptRunForCurrentPage,
-  shouldAcceptSlidesForCurrentPage,
-} from "./session-policy";
+import { normalizePanelUrl, panelUrlsMatch } from "./session-policy";
 import { createSetupControlsRuntime } from "./setup-controls-runtime";
 import { friendlyFetchError } from "./setup-runtime";
 import { hasResolvedSlidesPayload } from "./slides-pending";
@@ -53,11 +48,12 @@ import { selectMarkdownForLayout, type SlideTextMode } from "./slides-state";
 import { createSlidesTextController, type SlideSummarySource } from "./slides-text-controller";
 import { createSlidesViewRuntime } from "./slides-view-runtime";
 import { createSummarizeControlRuntime } from "./summarize-control-runtime";
+import { createSummaryRunRuntime } from "./summary-run-runtime";
 import { createSummaryStreamRuntime } from "./summary-stream-runtime";
 import { createSummaryViewRuntime } from "./summary-view-runtime";
 import { registerSidepanelTestHooks } from "./test-hooks";
 import { parseTimestampHref } from "./timestamp-links";
-import type { ChatMessage, PanelPhase, RunStart, UiState } from "./types";
+import type { ChatMessage, PanelPhase, UiState } from "./types";
 import { createTypographyController } from "./typography-controller";
 import { createUiStateRuntime } from "./ui-state-runtime";
 
@@ -202,6 +198,7 @@ let slidesRenderer: {
   forceRender: () => void;
 } | null = null;
 let slidesHydrator: {
+  getActiveRunId: () => string | null;
   handlePayload: (data: SseSlidesData) => void;
   handleSummaryFromCache: (value: boolean | null) => void;
   hydrateSnapshot: (reason: "timeout" | "resume") => Promise<void>;
@@ -289,21 +286,6 @@ function resolveActiveSlidesRunId(): string | null {
   return null;
 }
 
-function maybeStartPendingSummaryRunForUrl(url: string | null) {
-  if (!url) return false;
-  const key = normalizePanelUrl(url);
-  const pending = panelState.pendingRuns.summaryByUrl[key];
-  if (!pending) return false;
-  if (streamController.isStreaming()) return false;
-  panelStateStore.dispatch({ type: "pending-summary-run", urlKey: key, value: null });
-  if (pending.type === "snapshot") {
-    applySummarySnapshot({ run: pending.run, markdown: pending.markdown });
-  } else {
-    attachSummaryRun(pending.run);
-  }
-  return true;
-}
-
 function maybeStartPendingSlidesForUrl(url: string | null) {
   if (!url) return;
   const key = normalizePanelUrl(url);
@@ -319,143 +301,6 @@ function maybeStartPendingSlidesForUrl(url: string | null) {
   if (!pending.local) {
     startSlidesSummaryStreamForRunId(pending.runId, pending.url);
   }
-}
-
-function getSummaryScopeUrl() {
-  return panelState.currentSource?.url ?? getActiveTabUrl() ?? null;
-}
-
-function rememberSlideSummaryMarkdown(markdown: string) {
-  const trimmed = markdown.trim();
-  if (!trimmed) return;
-  panelStateStore.dispatch({
-    type: "retained-slide-summary",
-    value: {
-      markdown,
-      url: getSummaryScopeUrl(),
-    },
-  });
-}
-
-function getRetainedSlideSummaryMarkdown() {
-  const retainedSlideSummary = panelState.retainedSlideSummary;
-  if (!retainedSlideSummary) return null;
-  const currentUrl = getSummaryScopeUrl();
-  if (
-    retainedSlideSummary.url &&
-    currentUrl &&
-    !panelUrlsMatch(retainedSlideSummary.url, currentUrl)
-  ) {
-    return null;
-  }
-  return retainedSlideSummary.markdown;
-}
-
-function attachSummaryRun(run: RunStart) {
-  const activeSlidesRun = panelState.slidesLifecycle.activeRun;
-  const preserveActiveLocalSlideRun = Boolean(
-    activeSlidesRun?.local && activeSlidesRun.url && panelUrlsMatch(activeSlidesRun.url, run.url),
-  );
-  if (!preserveActiveLocalSlideRun) {
-    stopSlidesStream();
-  }
-  setPhase("connecting");
-  updatePanelSession({ lastAction: "summarize" });
-  window.clearTimeout(autoKickTimer);
-  if (panelState.chat.streaming) {
-    chatStreamRuntime.finishStreamingMessage();
-  }
-  const preserveChat = navigationRuntime.shouldPreserveChatForRun(run.url);
-  if (!preserveChat) {
-    void clearChatHistoryForActiveTab();
-    resetChatState();
-  } else {
-    summaryStreamRuntime.setPreserveChatOnNextReset(true);
-  }
-  metricsController.setActiveMode("summary");
-  const runRequestsSlides =
-    run.slides === true ||
-    (run.slides !== false &&
-      getSlidesState().slidesEnabled &&
-      (resolveSlidesInputMode(getSlidesState()) === "video" || getSlidesState().mediaAvailable));
-  const slidesRunId = runRequestsSlides
-    ? run.id
-    : preserveActiveLocalSlideRun
-      ? (activeSlidesRun?.runId ?? null)
-      : null;
-  headerController.setBaseTitle(run.title || run.url || "Summarize");
-  headerController.setBaseSubtitle("");
-  const fallbackModel = panelState.ui?.settings.model ?? null;
-  panelStateStore.dispatch({
-    type: "attach-run",
-    tabId: getActiveTabId(),
-    runId: run.id,
-    slidesRunId,
-    plannedSlidesRun: runRequestsSlides ? run : null,
-    source: { url: run.url, title: run.title },
-    meta: {
-      inputSummary: null,
-      model: fallbackModel,
-      modelLabel: fallbackModel,
-    },
-  });
-  if (runRequestsSlides) {
-    startSlidesStream(run);
-    plannedSlidesRuntime.seedForRun(run);
-  }
-  if (!panelState.summaryMarkdown?.trim()) {
-    renderMarkdownDisplay();
-  }
-  void streamController.start(run);
-}
-
-function applySummarySnapshot(payload: { run: RunStart; markdown: string }) {
-  const activeSlidesRun = panelState.slidesLifecycle.activeRun;
-  const preserveActiveSlideRun =
-    payload.run.slides === true &&
-    (slidesHydrator.getActiveRunId() === payload.run.id ||
-      Boolean(
-        activeSlidesRun?.local &&
-        activeSlidesRun.url &&
-        panelUrlsMatch(activeSlidesRun.url, payload.run.url),
-      ));
-  const preservedSlides =
-    payload.run.slides &&
-    panelState.slides &&
-    panelState.slides.sourceUrl &&
-    panelUrlsMatch(panelState.slides.sourceUrl, payload.run.url)
-      ? panelState.slides
-      : null;
-  resetSummaryView({
-    preserveChat: false,
-    clearRunId: false,
-    stopSlides: !preserveActiveSlideRun,
-  });
-  const slidesRunId =
-    preservedSlides?.sourceId ?? (preserveActiveSlideRun ? (activeSlidesRun?.runId ?? null) : null);
-  panelStateStore.dispatch({
-    type: "restore-session",
-    tabId: getActiveTabId(),
-    runId: payload.run.id,
-    slidesRunId,
-    source: { url: payload.run.url, title: payload.run.title },
-    meta: {
-      inputSummary: null,
-      model: payload.run.model,
-      modelLabel: payload.run.model,
-    },
-    summaryFromCache: null,
-    ...(preservedSlides ? { slides: preservedSlides } : {}),
-  });
-  headerController.setBaseTitle(payload.run.title || payload.run.url || "Summarize");
-  headerController.setBaseSubtitle("");
-  if (preservedSlides) {
-    setSlidesTranscriptTimedText(preservedSlides.transcriptTimedText ?? null);
-    updateSlidesTextState();
-  }
-  renderMarkdown(payload.markdown);
-  if (preservedSlides) queueSlidesRender();
-  setPhase("idle");
 }
 
 function showAutomationNotice({
@@ -822,7 +667,7 @@ function renderMarkdownDisplay() {
 }
 
 function renderMarkdown(markdown: string) {
-  rememberSlideSummaryMarkdown(markdown);
+  summaryRunRuntime.rememberRenderedMarkdown(markdown);
   slidesViewRuntime?.renderMarkdown(markdown);
 }
 
@@ -864,7 +709,7 @@ slidesViewRuntime = createSlidesViewRuntime({
   hideSlideNotice,
   panelState,
   dispatchPanelState: panelStateStore.dispatch,
-  getFallbackSummaryMarkdown: getRetainedSlideSummaryMarkdown,
+  getFallbackSummaryMarkdown: () => summaryRunRuntime.getRetainedMarkdown(),
 });
 
 slidesRenderer = slidesViewRuntime.slidesRenderer;
@@ -877,7 +722,7 @@ registerSidepanelTestHooks({
   applySlidesPayload,
   getRunId: () => panelState.runId,
   getSummaryMarkdown: () => panelState.summaryMarkdown ?? "",
-  getRetainedSlideSummaryMarkdown: () => getRetainedSlideSummaryMarkdown() ?? "",
+  getRetainedSlideSummaryMarkdown: () => summaryRunRuntime.getRetainedMarkdown() ?? "",
   getSlideDescriptions: () => slidesTextController.getDescriptionEntries(),
   getSlideSummaryEntries: () => slidesTextController.getSummaryEntries(),
   getSlideTitleEntries: () => Array.from(slidesTextController.getTitles().entries()),
@@ -922,7 +767,7 @@ registerSidepanelTestHooks({
     handleBgMessage(message);
   },
   applySummarySnapshot: (payload) => {
-    applySummarySnapshot(payload);
+    summaryRunRuntime.applySnapshot(payload);
   },
   applySummaryMarkdown: (markdown) => {
     renderMarkdown(markdown);
@@ -1214,6 +1059,47 @@ const summaryStreamRuntime = createSummaryStreamRuntime({
 });
 const { streamController } = summaryStreamRuntime;
 
+const summaryRunRuntime = createSummaryRunRuntime({
+  panelState,
+  dispatchPanelState: panelStateStore.dispatch,
+  getActiveTabId,
+  getActiveTabUrl,
+  clearAutoKickTimer: () => {
+    window.clearTimeout(autoKickTimer);
+  },
+  summaryStream: {
+    isStreaming: streamController.isStreaming,
+    setPreserveChatOnNextReset: summaryStreamRuntime.setPreserveChatOnNextReset,
+    start: streamController.start,
+  },
+  slides: {
+    getHydratedRunId: () => slidesHydrator.getActiveRunId(),
+    queueRender: queueSlidesRender,
+    seedPlannedRun: plannedSlidesRuntime.seedForRun,
+    setTranscriptTimedText: setSlidesTranscriptTimedText,
+    start: startSlidesStream,
+    stop: stopSlidesStream,
+    updateTextState: updateSlidesTextState,
+  },
+  chat: {
+    clearHistory: clearChatHistoryForActiveTab,
+    finishStreamingMessage: () => {
+      chatStreamRuntime.finishStreamingMessage();
+    },
+    reset: resetChatState,
+    shouldPreserveForRun: navigationRuntime.shouldPreserveChatForRun,
+  },
+  view: {
+    queueEmptyRender: renderMarkdownDisplay,
+    renderMarkdown,
+    reset: resetSummaryView,
+    setHeaderSubtitle: (value) => headerController.setBaseSubtitle(value),
+    setHeaderTitle: (value) => headerController.setBaseTitle(value),
+    setMetricsMode: (mode) => metricsController.setActiveMode(mode),
+    setPhase,
+  },
+});
+
 const uiStateRuntime = createUiStateRuntime({
   panelState,
   dispatchPanelState: panelStateStore.dispatch,
@@ -1229,7 +1115,7 @@ const uiStateRuntime = createUiStateRuntime({
   clearChatHistoryForActiveTab,
   resetChatState,
   migrateChatHistory,
-  maybeStartPendingSummaryRunForUrl,
+  maybeStartPendingSummaryRunForUrl: summaryRunRuntime.maybeStartPendingForUrl,
   maybeStartPendingSlidesForUrl,
   requestSlidesCapture: () => {
     void send({ type: "panel:slides-capture" });
@@ -1325,26 +1211,14 @@ const bgMessageRuntime = createSidepanelBgMessageRuntime({
     applyPanelCache(cache as PanelCachePayload, opts);
   },
   rememberPendingSummaryRun: (run) => {
-    panelStateStore.dispatch({
-      type: "pending-summary-run",
-      urlKey: normalizePanelUrl(run.url),
-      value: { type: "run", run },
-    });
+    summaryRunRuntime.rememberPendingRun(run);
   },
   rememberPendingSummarySnapshot: (payload) => {
-    panelStateStore.dispatch({
-      type: "pending-summary-run",
-      urlKey: normalizePanelUrl(payload.run.url),
-      value: {
-        type: "snapshot",
-        run: payload.run,
-        markdown: payload.markdown,
-      },
-    });
+    summaryRunRuntime.rememberPendingSnapshot(payload);
   },
-  attachSummaryRun,
+  attachSummaryRun: summaryRunRuntime.attachRun,
   applySummarySnapshot: (payload) => {
-    applySummarySnapshot(payload);
+    summaryRunRuntime.applySnapshot(payload);
   },
   handleChatHistory: (chatHistory) => {
     chatSession.handleChatHistoryResponse(chatHistory as never);
