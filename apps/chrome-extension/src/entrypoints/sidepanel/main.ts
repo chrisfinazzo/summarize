@@ -1,5 +1,4 @@
 import type { Message, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
-import { extractYouTubeVideoId } from "@steipete/summarize-core/content/url";
 import MarkdownIt from "markdown-it";
 import { executeToolCall, getAutomationToolNames } from "../../automation/tools";
 import type { BgToPanel, PanelToBg } from "../../lib/panel-contracts";
@@ -38,6 +37,7 @@ import { createNavigationRuntime } from "./navigation-runtime";
 import { createPanelCacheController, type PanelCachePayload } from "./panel-cache";
 import { createPanelMessagingRuntime } from "./panel-messaging";
 import { createPanelStateStore } from "./panel-state-store";
+import { createPlannedSlidesRuntime } from "./planned-slides-runtime";
 import {
   normalizePanelUrl,
   panelUrlsMatch,
@@ -48,7 +48,6 @@ import { createSetupControlsRuntime } from "./setup-controls-runtime";
 import { friendlyFetchError } from "./setup-runtime";
 import { hasResolvedSlidesPayload } from "./slides-pending";
 import { createSidepanelSlidesRuntime } from "./slides-runtime";
-import { shouldSeedPlannedSlidesForRun } from "./slides-seed-policy";
 import { resolveSlidesInputMode } from "./slides-session-state";
 import { selectMarkdownForLayout, type SlideTextMode } from "./slides-state";
 import { createSlidesTextController, type SlideSummarySource } from "./slides-text-controller";
@@ -402,7 +401,7 @@ function attachSummaryRun(run: RunStart) {
   });
   if (runRequestsSlides) {
     startSlidesStream(run);
-    seedPlannedSlidesForRun(run);
+    plannedSlidesRuntime.seedForRun(run);
   }
   if (!panelState.summaryMarkdown?.trim()) {
     renderMarkdownDisplay();
@@ -457,67 +456,6 @@ function applySummarySnapshot(payload: { run: RunStart; markdown: string }) {
   renderMarkdown(payload.markdown);
   if (preservedSlides) queueSlidesRender();
   setPhase("idle");
-}
-
-function maybeSeedPlannedSlidesForPendingRun() {
-  const pendingRun = getPlannedSlidesRunForReseed();
-  if (!pendingRun) return false;
-  if (!isCurrentPlannedSlidesRun(pendingRun)) return false;
-  if (seedPlannedSlidesForRun(pendingRun)) {
-    if (plannedSlidesHaveUsableTimingOrImages(pendingRun)) {
-      clearPlannedSlidesRunForReseed();
-    }
-    return true;
-  }
-  return false;
-}
-
-function getPlannedSlidesRunForReseed() {
-  const plannedRun = panelState.slidesLifecycle.plannedRun;
-  if (!plannedRun) return null;
-  return panelState.runId === plannedRun.id || panelState.slidesRunId === plannedRun.id
-    ? plannedRun
-    : null;
-}
-
-function clearPlannedSlidesRunForReseed() {
-  panelStateStore.dispatch({ type: "planned-slides-run", value: null });
-}
-
-function plannedSlidesHaveUsableTimingOrImages(run: RunStart) {
-  if (currentRunHasResolvedSlideImages(run)) return true;
-  const sourceId = getPlannedSlidesSourceId(run);
-  if (!panelState.slides || panelState.slides.sourceId !== sourceId) return false;
-  return panelState.slides.slides.some(
-    (slide) => Number.isFinite(slide.timestamp) || (slide.imageUrl ?? "").trim().length > 0,
-  );
-}
-
-function currentRunHasResolvedSlideImages(run: RunStart) {
-  if (!panelState.slides) return false;
-  const hasResolvedImages = panelState.slides.slides.some(
-    (slide) => (slide.imageUrl ?? "").trim().length > 0,
-  );
-  if (!hasResolvedImages) return false;
-  if (panelState.runId === run.id || panelState.slidesRunId === run.id) return true;
-  const sourceUrl =
-    panelState.slides.sourceUrl || panelState.currentSource?.url || getActiveTabUrl();
-  return sourceUrl ? panelUrlsMatch(run.url, sourceUrl) : false;
-}
-
-function seedPlannedSlidesForPendingRunAndConsumeWhenReady() {
-  const pendingRun = getPlannedSlidesRunForReseed();
-  if (!pendingRun) return;
-  if (!isCurrentPlannedSlidesRun(pendingRun)) return;
-  if (seedPlannedSlidesForRun(pendingRun) && plannedSlidesHaveUsableTimingOrImages(pendingRun)) {
-    clearPlannedSlidesRunForReseed();
-  }
-}
-
-function isCurrentPlannedSlidesRun(run: RunStart) {
-  const currentUrl =
-    panelState.currentSource?.url ?? getActiveTabUrl() ?? panelState.ui?.tab.url ?? null;
-  return currentUrl ? panelUrlsMatch(run.url, currentUrl) : false;
 }
 
 function showAutomationNotice({
@@ -1069,6 +1007,16 @@ const appearanceControls = createAppearanceControls({
   },
 });
 
+const plannedSlidesRuntime = createPlannedSlidesRuntime({
+  panelState,
+  dispatchPanelState: panelStateStore.dispatch,
+  getActiveTabUrl,
+  getLengthValue: () => appearanceControls.getLengthValue(),
+  updateSlidesTextState,
+  queueSlidesRender,
+  schedulePanelCacheSync: (delayMs) => panelCacheController.scheduleSync(delayMs),
+});
+
 chatUiRuntime = createChatUiRuntime({
   mainEl,
   chatJumpBtn,
@@ -1257,7 +1205,7 @@ const summaryStreamRuntime = createSummaryStreamRuntime({
     panelCacheController.scheduleSync();
   },
   seedPlannedSlidesForPendingRun: () => {
-    seedPlannedSlidesForPendingRunAndConsumeWhenReady();
+    plannedSlidesRuntime.seedPendingRunAndConsumeWhenReady();
   },
   setSlidesBusy,
   setPhase,
@@ -1302,7 +1250,7 @@ const uiStateRuntime = createUiStateRuntime({
   setSlidesLayout: (value) => {
     setSlidesLayout(value as SlidesLayout);
   },
-  maybeSeedPlannedSlidesForPendingRun,
+  maybeSeedPlannedSlidesForPendingRun: plannedSlidesRuntime.maybeSeedPendingRun,
   refreshSummarizeControl,
   maybeShowSetup,
   setPhase,
@@ -1511,97 +1459,6 @@ summarizeControlRuntime = createSummarizeControlRuntime({
     slidesRenderer?.applyLayout();
   },
 });
-
-function getPlannedSlidesSourceId(run: RunStart) {
-  const youtubeId = extractYouTubeVideoId(run.url);
-  return youtubeId ? `youtube-${youtubeId}` : `planned-${run.id}`;
-}
-
-function seedPlannedSlidesForRun(run: RunStart) {
-  const durationSeconds =
-    getSlidesState().summarizeVideoDurationSeconds ??
-    panelState.ui?.stats.videoDurationSeconds ??
-    null;
-  const hasDuration =
-    typeof durationSeconds === "number" && Number.isFinite(durationSeconds) && durationSeconds > 0;
-  if (
-    !shouldSeedPlannedSlidesForRun({
-      durationSeconds,
-      inputMode: resolveSlidesInputMode(getSlidesState()),
-      media: panelState.ui?.media,
-      mediaAvailable: getSlidesState().mediaAvailable,
-      runUrl: run.url,
-      slidesEnabled: getSlidesState().slidesEnabled,
-    })
-  ) {
-    return false;
-  }
-
-  const normalized = appearanceControls.getLengthValue().trim().toLowerCase();
-  const chunkSeconds =
-    normalized === "short"
-      ? 600
-      : normalized === "medium"
-        ? 450
-        : normalized === "long"
-          ? 300
-          : normalized === "xl"
-            ? 180
-            : normalized === "xxl"
-              ? 120
-              : 300;
-
-  const defaultCount = 6;
-  const target = hasDuration
-    ? Math.max(3, Math.round(durationSeconds / chunkSeconds))
-    : defaultCount;
-  const count = Math.max(3, Math.min(80, target));
-
-  const youtubeId = extractYouTubeVideoId(run.url);
-  const sourceId = getPlannedSlidesSourceId(run);
-  const sourceKind = youtubeId ? "youtube" : "direct";
-  if (currentRunHasResolvedSlideImages(run)) {
-    return true;
-  }
-
-  const existingSlides = panelState.slides?.sourceId === sourceId ? panelState.slides : null;
-  if (existingSlides && existingSlides.slides.length > 0) {
-    const hasResolvedImages = existingSlides.slides.some(
-      (slide) => (slide.imageUrl ?? "").trim().length > 0,
-    );
-    const hasUsableTimestamps = existingSlides.slides.some((slide) =>
-      Number.isFinite(slide.timestamp),
-    );
-    if (hasResolvedImages || !hasDuration || hasUsableTimestamps) {
-      return true;
-    }
-  }
-
-  const slides = Array.from({ length: count }, (_, i) => {
-    const ratio = count <= 1 ? 0 : i / Math.max(1, count - 1);
-    const timestamp = hasDuration
-      ? Math.max(0, Math.min(durationSeconds - 0.1, ratio * durationSeconds))
-      : Number.NaN;
-    const index = i + 1;
-    return { index, timestamp, imageUrl: "" };
-  });
-
-  panelStateStore.dispatch({
-    type: "slides",
-    slides: {
-      sourceUrl: run.url,
-      sourceId,
-      sourceKind,
-      ocrAvailable: false,
-      slides,
-    },
-  });
-  updateSlidesState({ slidesSeededSourceId: sourceId });
-  updateSlidesTextState();
-  queueSlidesRender();
-  panelCacheController.scheduleSync(0);
-  return true;
-}
 
 function describeAutomationToolCall(call: ToolCall): string {
   const args = call.arguments ? JSON.stringify(call.arguments, null, 2) : "{}";
