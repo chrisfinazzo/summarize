@@ -1,8 +1,6 @@
 import type { Command } from "commander";
-import { executeSummarize } from "../application/execute-summarize.js";
 import { createSummarizeExecutionResources } from "../application/execution-resources.js";
 import { resolveSummarizeRun } from "../application/run-spec.js";
-import type { SummarizeRequest } from "../application/summarize-contracts.js";
 import { type CacheState } from "../cache.js";
 import type { ExecFileFn } from "../markitdown.js";
 import { resolveSpeakerIdentificationSettings } from "../speaker-identification/index.js";
@@ -12,7 +10,7 @@ import {
   resolveTrueColor,
 } from "../tty/theme.js";
 import { createCacheStateFromConfig } from "./cache-state.js";
-import { presentCliSummarizeResult } from "./cli-summarize-output.js";
+import { createCliUrlSummaryExecutor } from "./cli-summarize-execution.js";
 import { createCliSummarizeResolution } from "./cli-summarize-request.js";
 import { parseCliProviderArg } from "./env.js";
 import { isPdfExtension, isTranscribableExtension } from "./flows/asset/input.js";
@@ -339,40 +337,19 @@ export async function createRunnerPlan(options: {
   const { apiStatus, metrics } = executionResources.modelResources.runtime;
   const { trackedFetch, buildReport, estimateCostUsd } = metrics;
   const { summarizeAsset, assetSummaryContext, urlFlowContext } = executionResources;
-  const executeUrlSummary = async ({
-    ctx,
-    url: targetUrl,
-    isYoutubeUrl: targetIsYoutubeUrl,
-  }: {
-    ctx: typeof urlFlowContext;
-    url: string;
-    isYoutubeUrl: boolean;
-  }) => {
-    const request: SummarizeRequest = {
-      ...summarizeResolution.request,
-      input: {
-        kind: "url",
-        url: targetUrl,
-        title: null,
-        maxCharacters: extractMode ? maxExtractCharacters : null,
-      },
-      slides: slidesSettings,
-    };
-    const result = await executeSummarize(
-      request,
-      {
-        runId: `cli-${runStartedAtMs}`,
-        env,
-        fetch: fetchImpl,
-        execFile: execFileImpl,
-        cache: executionResources.cacheState,
-        mediaCache,
-      },
-      undefined,
-      { urlFlowContext: ctx, isYoutubeUrl: targetIsYoutubeUrl },
-    );
-    await presentCliSummarizeResult({ ctx, result });
-  };
+  const executeUrlSummary = createCliUrlSummaryExecutor({
+    baseRequest: summarizeResolution.request,
+    runtime: {
+      runId: `cli-${runStartedAtMs}`,
+      env,
+      fetch: fetchImpl,
+      execFile: execFileImpl,
+      cache: executionResources.cacheState,
+      mediaCache,
+    },
+    slides: slidesSettings,
+    maxExtractCharacters: extractMode ? maxExtractCharacters : null,
+  });
   const assetInputContext = createRunnerAssetInputContext({
     summarizeMediaFileImpl,
     assetSummaryContext,
