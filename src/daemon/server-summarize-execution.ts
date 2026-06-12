@@ -1,8 +1,5 @@
-import type http from "node:http";
-import { encodeSseEvent, type SseSlidesData } from "@steipete/summarize-core/runtime";
 import { executeSummarize } from "../application/execute-summarize.js";
 import type {
-  SummarizeEvent,
   SummarizeInput,
   SummarizeRequest,
   SummarizeRuntime,
@@ -13,51 +10,27 @@ import type { ExecFileFn } from "../markitdown.js";
 import { execFileTracked } from "../processes.js";
 import { runWithProcessContext } from "../processes.js";
 import { formatModelLabelForDisplay } from "../run/finish-line.js";
-import type { SlideExtractionResult, SlideSettings, SlideSourceKind } from "../slides/index.js";
-import { type DaemonRequestedMode, resolveAutoDaemonMode } from "./auto-mode.js";
+import type { SlideExtractionResult } from "../slides/index.js";
+import { resolveAutoDaemonMode } from "./auto-mode.js";
 import {
   emitMeta,
-  emitSlides,
   emitSlidesDone,
-  emitSlidesStatus,
   pushToSession,
   scheduleSessionCleanup,
   type Session,
   type SessionEvent,
 } from "./server-session.js";
-import type { ParsedSummarizeRequest } from "./server-summarize-request.js";
 import {
-  buildDaemonSummaryMetrics,
-  buildInputSummaryForExtracted,
-} from "./summarize-presentation.js";
-import { formatProgress } from "./summarize-progress.js";
+  createDaemonSummarizeEventAdapter,
+  type SlidesLogShape,
+} from "./server-summarize-events.js";
+import type { ParsedSummarizeRequest } from "./server-summarize-request.js";
+import { buildDaemonSummaryMetrics } from "./summarize-presentation.js";
 import { assertDaemonUrlFetchAllowed, createDaemonUrlFetchGuard } from "./url-fetch-guard.js";
 
 type LoggerLike = {
   info?: (payload: Record<string, unknown>) => void;
   error?: (payload: Record<string, unknown>) => void;
-};
-
-type SlidesLogShape = {
-  enabled: boolean;
-  ocr: boolean;
-  outputDir: string;
-  sceneThreshold: number | null;
-  autoTuneThreshold: boolean;
-  maxSlides: number | null;
-  minDurationSeconds: number | null;
-};
-
-type SlideLogState = {
-  startedAt: number | null;
-  requested: boolean;
-  cacheHit: boolean;
-  lastStatus: string | null;
-  statusCount: number;
-  elapsedMs: number | null;
-  slidesCount: number | null;
-  ocrAvailable: boolean | null;
-  warnings: string[];
 };
 
 type ExecuteSummarizeSessionArgs = {
@@ -136,36 +109,6 @@ function toApplicationRuntime({
   };
 }
 
-export function buildSlidesPayload({
-  slides,
-  port,
-  transcriptTimedText,
-}: {
-  slides: SlideExtractionResult;
-  port: number;
-  transcriptTimedText?: string | null;
-}): SseSlidesData {
-  const baseUrl = `http://127.0.0.1:${port}/v1/slides/${slides.sourceId}`;
-  return {
-    sourceUrl: slides.sourceUrl,
-    sourceId: slides.sourceId,
-    sourceKind: slides.sourceKind,
-    ocrAvailable: slides.ocrAvailable,
-    transcriptTimedText: transcriptTimedText ?? null,
-    slides: slides.slides.map((slide) => ({
-      index: slide.index,
-      timestamp: slide.timestamp,
-      imageUrl: `${baseUrl}/${slide.index}${
-        typeof slide.imageVersion === "number" && slide.imageVersion > 0
-          ? `?v=${slide.imageVersion}`
-          : ""
-      }`,
-      ocrText: slide.ocrText ?? null,
-      ocrConfidence: slide.ocrConfidence ?? null,
-    })),
-  };
-}
-
 export async function handleExtractOnlySummarizeRequest({
   request,
   env,
@@ -217,62 +160,6 @@ export async function handleExtractOnlySummarizeRequest({
     }
     return { extracted: result.extracted, slides: result.slides };
   });
-}
-
-function createSlideLogState(requested: boolean): SlideLogState {
-  return {
-    startedAt: null,
-    requested,
-    cacheHit: false,
-    lastStatus: null,
-    statusCount: 0,
-    elapsedMs: null,
-    slidesCount: null,
-    ocrAvailable: null,
-    warnings: [],
-  };
-}
-
-function serializeSlideLogState(state: SlideLogState) {
-  return {
-    requested: true,
-    cacheHit: state.cacheHit,
-    lastStatus: state.lastStatus,
-    statusCount: state.statusCount,
-    elapsedMs: state.elapsedMs,
-    slidesCount: state.slidesCount,
-    ocrAvailable: state.ocrAvailable,
-    warnings: state.warnings,
-  };
-}
-
-function createLiveSlides(meta: {
-  slidesDir: string;
-  sourceUrl: string;
-  sourceId: string;
-  sourceKind: SlideSourceKind;
-  ocrAvailable: boolean;
-}): SlideExtractionResult {
-  return {
-    sourceUrl: meta.sourceUrl,
-    sourceKind: meta.sourceKind,
-    sourceId: meta.sourceId,
-    slidesDir: meta.slidesDir,
-    sceneThreshold: 0,
-    autoTuneThreshold: false,
-    autoTune: {
-      enabled: false,
-      chosenThreshold: 0,
-      confidence: 0,
-      strategy: "none",
-    },
-    maxSlides: 0,
-    minSlideDuration: 0,
-    ocrRequested: meta.ocrAvailable,
-    ocrAvailable: meta.ocrAvailable,
-    slides: [],
-    warnings: [],
-  };
 }
 
 export function toExtractOnlySlidesPayload(slides: SlideExtractionResult | null): {
@@ -331,178 +218,24 @@ export async function executeSummarizeSession({
     slidesSettings,
     hasText,
   } = request;
-  const slideLogState = createSlideLogState(Boolean(slidesSettings));
-  let logSummaryFromCache = false;
-  let logInputSummary: string | null = null;
-  let logSummaryText = "";
-  let logExtracted: Record<string, unknown> | null = null;
+  const eventAdapter = createDaemonSummarizeEventAdapter({
+    session,
+    pageUrl,
+    slidesRequested: Boolean(slidesSettings),
+    port,
+    onSessionEvent,
+    includeContentLog,
+    requestLogger,
+    logSlidesSettings,
+  });
 
   try {
-    let emittedOutput = false;
     const requestCache: CacheState = noCache
       ? { ...cacheState, mode: "bypass" as const, store: null }
       : cacheState;
-    let liveSlides: SlideExtractionResult | null = null;
-
-    const writeStatus = (text: string) => {
-      const clean = text.trim();
-      if (!clean) return;
-      pushToSession(session, { event: "status", data: { text: clean } }, onSessionEvent);
-    };
-
-    const handleApplicationEvent = (event: SummarizeEvent) => {
-      if (event.type === "summary-delta") {
-        emittedOutput = true;
-        if (includeContentLog) logSummaryText += event.text;
-        pushToSession(session, { event: "chunk", data: { text: event.text } }, onSessionEvent);
-        return;
-      }
-      if (event.type === "model-selected") {
-        if (session.lastMeta.model === event.modelId) return;
-        emittedOutput = true;
-        emitMeta(
-          session,
-          {
-            model: event.modelId,
-            modelLabel: formatModelLabelForDisplay(event.modelId),
-          },
-          onSessionEvent,
-        );
-        return;
-      }
-      if (event.type === "extraction-started") {
-        writeStatus("Extracting…");
-        return;
-      }
-      if (event.type === "extraction-progress") {
-        const message = formatProgress(event.event);
-        if (message) writeStatus(message);
-        return;
-      }
-      if (event.type === "content-extracted") {
-        session.transcriptTimedText = event.content.transcriptTimedText ?? null;
-        if (includeContentLog) {
-          logExtracted = event.content as unknown as Record<string, unknown>;
-        }
-        const inputSummary = buildInputSummaryForExtracted(event.content);
-        if (inputSummary) logInputSummary = inputSummary;
-        emitMeta(session, { inputSummary, summaryFromCache: null }, onSessionEvent);
-        return;
-      }
-      if (event.type === "summary-started") {
-        writeStatus("Summarizing…");
-        return;
-      }
-      if (event.type === "summary-cache") {
-        logSummaryFromCache = event.cached;
-        emitMeta(session, { inputSummary: null, summaryFromCache: event.cached }, onSessionEvent);
-        return;
-      }
-      if (event.type === "slides-extracted") {
-        const { slides } = event;
-        session.slides = slides;
-        slideLogState.slidesCount = slides.slides.length;
-        slideLogState.ocrAvailable = slides.ocrAvailable;
-        slideLogState.warnings = slides.warnings;
-        if (slideLogState.startedAt) {
-          slideLogState.elapsedMs = Date.now() - slideLogState.startedAt;
-          console.log(
-            `[summarize-daemon] slides: done count=${slides.slides.length} ocr=${slides.ocrAvailable} elapsedMs=${slideLogState.elapsedMs} warnings=${slides.warnings.join("; ")}`,
-          );
-        }
-        if (includeContentLog) {
-          requestLogger?.info?.({
-            event: "slides.done",
-            url: pageUrl,
-            sessionId: session.id,
-            slidesCount: slides.slides.length,
-            ocrAvailable: slides.ocrAvailable,
-            elapsedMs: slideLogState.elapsedMs,
-            cacheHit: slideLogState.cacheHit,
-            warnings: slides.warnings,
-          });
-        }
-        emitSlides(
-          session,
-          buildSlidesPayload({
-            slides,
-            port,
-            transcriptTimedText: session.transcriptTimedText,
-          }),
-          onSessionEvent,
-        );
-        return;
-      }
-      if (event.type === "slides-completed") {
-        emitSlidesDone(session, { ok: event.ok, error: event.error }, onSessionEvent);
-        return;
-      }
-      if (event.type === "slides-progress") {
-        const clean = event.text.trim();
-        if (!clean) return;
-        slideLogState.lastStatus = clean;
-        slideLogState.statusCount += 1;
-        if (clean.toLowerCase().includes("cached")) {
-          slideLogState.cacheHit = true;
-        }
-        const progressMatch = clean.match(/(\d+)%/);
-        const progress = progressMatch ? Number(progressMatch[1]) : null;
-        if (includeContentLog) {
-          requestLogger?.info?.({
-            event: "slides.status",
-            url: pageUrl,
-            sessionId: session.id,
-            status: clean,
-            ...(progress !== null ? { progress } : {}),
-          });
-        }
-        emitSlidesStatus(session, clean, onSessionEvent);
-        writeStatus(clean);
-        return;
-      }
-      if (event.type === "slide") {
-        const { slide, meta } = event;
-        if (!slide || !meta?.slidesDir || !meta.sourceUrl || !meta.sourceId || !meta.sourceKind) {
-          return;
-        }
-        const nextSlides = liveSlides ?? createLiveSlides(meta);
-        liveSlides = nextSlides;
-        const existingIndex = nextSlides.slides.findIndex((item) => item.index === slide.index);
-        if (existingIndex >= 0) {
-          nextSlides.slides[existingIndex] = {
-            ...nextSlides.slides[existingIndex],
-            ...slide,
-          };
-        } else {
-          nextSlides.slides.push(slide);
-        }
-        nextSlides.slides.sort((a, b) => a.index - b.index);
-        session.slides = nextSlides;
-        emitSlides(
-          session,
-          buildSlidesPayload({
-            slides: nextSlides,
-            port,
-            transcriptTimedText: session.transcriptTimedText,
-          }),
-          onSessionEvent,
-        );
-      }
-    };
 
     const runWithMode = async (resolved: "url" | "page") => {
-      if (resolved === "url" && slideLogState.requested) {
-        slideLogState.startedAt = Date.now();
-        console.log(`[summarize-daemon] slides: start url=${pageUrl} (session=${session.id})`);
-        if (includeContentLog) {
-          requestLogger?.info?.({
-            event: "slides.start",
-            url: pageUrl,
-            sessionId: session.id,
-            ...(logSlidesSettings ? { settings: logSlidesSettings } : {}),
-          });
-        }
-      }
+      if (resolved === "url") eventAdapter.startSlides();
 
       let resolvedUrlFetch = urlFetchImpl;
       const input: SummarizeInput =
@@ -524,7 +257,7 @@ export async function executeSummarizeSession({
           cache: requestCache,
           mediaCache,
         }),
-        handleApplicationEvent,
+        eventAdapter.handleEvent,
       );
       if (result.kind !== "summary") {
         throw new Error("Internal error: expected summary result");
@@ -538,8 +271,8 @@ export async function executeSummarizeSession({
       try {
         return await runWithMode(primary);
       } catch (error) {
-        if (!fallback || emittedOutput) throw error;
-        writeStatus("Primary failed. Trying fallback…");
+        if (!fallback || eventAdapter.state.emittedOutput) throw error;
+        eventAdapter.writeStatus("Primary failed. Trying fallback…");
         try {
           return await runWithMode(fallback);
         } catch (fallbackError) {
@@ -576,16 +309,14 @@ export async function executeSummarizeSession({
       mode,
       model: result.usedModel,
       elapsedMs: Date.now() - logStartedAt,
-      summaryFromCache: logSummaryFromCache,
-      inputSummary: logInputSummary,
-      ...(includeContentLog && slideLogState.requested
-        ? { slides: serializeSlideLogState(slideLogState) }
-        : {}),
-      ...(includeContentLog && !logSummaryFromCache
+      summaryFromCache: eventAdapter.state.summaryFromCache,
+      inputSummary: eventAdapter.state.inputSummary,
+      ...(includeContentLog && slidesSettings ? { slides: eventAdapter.serializeSlides() } : {}),
+      ...(includeContentLog && !eventAdapter.state.summaryFromCache
         ? {
             input: logInput,
-            extracted: logExtracted,
-            summary: logSummaryText,
+            extracted: eventAdapter.state.extracted,
+            summary: eventAdapter.state.summaryText,
           }
         : {}),
     });
@@ -601,20 +332,18 @@ export async function executeSummarizeSession({
       url: request.pageUrl,
       mode: request.mode,
       elapsedMs: Date.now() - logStartedAt,
-      summaryFromCache: logSummaryFromCache,
-      inputSummary: logInputSummary,
-      ...(includeContentLog && slideLogState.requested
-        ? { slides: serializeSlideLogState(slideLogState) }
-        : {}),
+      summaryFromCache: eventAdapter.state.summaryFromCache,
+      inputSummary: eventAdapter.state.inputSummary,
+      ...(includeContentLog && slidesSettings ? { slides: eventAdapter.serializeSlides() } : {}),
       error: {
         message,
         stack: error instanceof Error ? error.stack : null,
       },
-      ...(includeContentLog && !logSummaryFromCache
+      ...(includeContentLog && !eventAdapter.state.summaryFromCache
         ? {
             input: logInput,
-            extracted: logExtracted,
-            summary: logSummaryText || null,
+            extracted: eventAdapter.state.extracted,
+            summary: eventAdapter.state.summaryText || null,
           }
         : {}),
     });

@@ -5,7 +5,7 @@ import { resolveValidSlideImagePath, type SlideExtractionResult } from "../slide
 import { json } from "./server-http.js";
 import type { Session } from "./server-session.js";
 import { attachBufferedSseSession } from "./server-sse.js";
-import { buildSlidesPayload } from "./server-summarize-execution.js";
+import { buildSlidesPayload } from "./server-summarize-events.js";
 import { resolveHomeDir } from "./server-summarize-request.js";
 
 export async function handleSessionRoutes(options: {
