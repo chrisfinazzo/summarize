@@ -1,6 +1,7 @@
 import type { CliProvider } from "../config.js";
 import type {
   DiarizationMode,
+  EmbeddedVideoMode,
   FirecrawlMode,
   LengthArg,
   MarkdownMode,
@@ -11,6 +12,7 @@ import type {
 import {
   parseDiarizationMode,
   parseDurationMs,
+  parseEmbeddedVideoMode,
   parseFirecrawlMode,
   parseLengthArg,
   parseMarkdownMode,
@@ -47,6 +49,7 @@ export type RunOverrides = {
   preprocessMode: PreprocessMode | null;
   youtubeMode: YoutubeMode | null;
   videoMode: VideoMode | null;
+  embeddedVideoMode: EmbeddedVideoMode | null;
   transcriptTimestamps: boolean | null;
   transcriptDiarization: DiarizationMode | null;
   forceSummary: boolean | null;
@@ -64,6 +67,7 @@ export type RunOverridesInput = {
   preprocess?: unknown;
   youtube?: unknown;
   videoMode?: unknown;
+  embeddedVideo?: unknown;
   timestamps?: unknown;
   diarize?: unknown;
   forceSummary?: unknown;
@@ -174,6 +178,7 @@ export function resolveRunOverrides(
     preprocess,
     youtube,
     videoMode,
+    embeddedVideo,
     timestamps,
     diarize,
     forceSummary,
@@ -296,6 +301,7 @@ export function resolveRunOverrides(
     preprocessMode: parseOptionalSetting(preprocess, parsePreprocessMode, strict),
     youtubeMode: parseOptionalSetting(youtube, parseYoutubeMode, strict),
     videoMode: parseOptionalSetting(videoMode, parseVideoMode, strict),
+    embeddedVideoMode: parseOptionalSetting(embeddedVideo, parseEmbeddedVideoMode, strict),
     transcriptTimestamps: parseOptionalBoolean(timestamps, strict, "--timestamps"),
     transcriptDiarization: parseOptionalSetting(diarize, parseDiarizationMode, strict),
     forceSummary: forceSummaryResolved,

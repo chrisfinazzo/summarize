@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.17.4 - Unreleased
+## 0.18.0 - Unreleased
+
+### Features
+
+- Website media: detect a primary embedded YouTube video, use free captions automatically, and combine its transcript with substantial article text; add `--embedded-video auto|off|prefer|both`.
 
 ### Fixes
 

@@ -77,6 +77,7 @@ export async function fetchLinkContent(
   const maxCharacters = resolveMaxCharacters(options);
   const youtubeTranscriptMode = options?.youtubeTranscript ?? "auto";
   const mediaTranscriptMode = options?.mediaTranscript ?? "auto";
+  const embeddedVideoMode = options?.embeddedVideo ?? "auto";
   const transcriptTimestamps = options?.transcriptTimestamps ?? false;
   const transcriptDiarization = options?.transcriptDiarization ?? null;
   const transcriptVideoDownload = options?.transcriptVideoDownload ?? false;
@@ -378,8 +379,10 @@ export async function fetchLinkContent(
       maxCharacters,
       youtubeTranscriptMode,
       mediaTranscriptMode,
+      embeddedVideoMode,
       transcriptTimestamps,
       transcriptDiarization,
+      transcriptVideoDownload,
       firecrawlDiagnostics,
       markdownRequested,
       timeoutMs,
@@ -547,6 +550,7 @@ export async function fetchLinkContent(
       maxCharacters,
       youtubeTranscriptMode,
       mediaTranscriptMode,
+      embeddedVideoMode,
       transcriptTimestamps,
       transcriptDiarization,
       transcriptVideoDownload,
@@ -633,6 +637,7 @@ export async function fetchLinkContent(
     maxCharacters,
     youtubeTranscriptMode,
     mediaTranscriptMode,
+    embeddedVideoMode,
     transcriptTimestamps,
     transcriptDiarization,
     transcriptVideoDownload,

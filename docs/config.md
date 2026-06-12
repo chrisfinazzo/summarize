@@ -358,9 +358,14 @@ For auto selection with rules:
       }
     ]
   },
-  "media": { "videoMode": "auto" }
+  "media": {
+    "videoMode": "auto",
+    "embeddedVideo": "auto"
+  }
 }
 ```
+
+`media.embeddedVideo` accepts `"auto"`, `"off"`, `"prefer"`, or `"both"`. Automatic mode uses only high-confidence primary YouTube embeds and free captions, combining the transcript with substantial article text.
 
 Notes:
 
