@@ -1,9 +1,18 @@
-import { spawn } from "node:child_process";
-import { closeSync, openSync } from "node:fs";
-import fs from "node:fs/promises";
-import path from "node:path";
 import { buildDaemonHelp } from "../run/help.js";
-import { resolveCliEntrypointPathForService } from "./cli-entrypoint.js";
+import {
+  checkAuth,
+  checkAuthWithRetries,
+  sleep,
+  waitForHealth,
+  waitForHealthWithRetries,
+} from "./cli-health.js";
+import {
+  formatProgramArguments,
+  readInstalledDaemonCommand,
+  resolveDaemonProgramArguments,
+  resolveDaemonService,
+  startDetachedContainerDaemon,
+} from "./cli-service.js";
 import {
   daemonConfigPrimaryToken,
   daemonConfigTokens,
@@ -13,29 +22,7 @@ import {
 import { DAEMON_HOST, DAEMON_PORT_DEFAULT } from "./constants.js";
 import { mergeDaemonEnv } from "./env-merge.js";
 import { buildEnvSnapshotFromEnv } from "./env-snapshot.js";
-import {
-  installLaunchAgent,
-  isLaunchAgentLoaded,
-  readLaunchAgentProgramArguments,
-  restartLaunchAgent,
-  resolveDaemonLogPaths,
-  uninstallLaunchAgent,
-} from "./launchd.js";
-import {
-  installScheduledTask,
-  isScheduledTaskInstalled,
-  readScheduledTaskCommand,
-  restartScheduledTask,
-  uninstallScheduledTask,
-} from "./schtasks.js";
 import { runDaemonServer } from "./server.js";
-import {
-  installSystemdService,
-  isSystemdServiceEnabled,
-  readSystemdServiceExecStart,
-  restartSystemdService,
-  uninstallSystemdService,
-} from "./systemd.js";
 import { isWindowsContainerEnvironment } from "./windows-container.js";
 
 type DaemonCliContext = {
@@ -72,258 +59,6 @@ function readPortArg(argv: string[]): number | null {
   return Math.floor(port);
 }
 
-type DaemonServiceInstallArgs = {
-  env: Record<string, string | undefined>;
-  stdout: NodeJS.WritableStream;
-  programArguments: string[];
-  workingDirectory?: string;
-};
-
-type DaemonService = {
-  label: string;
-  loadedText: string;
-  notLoadedText: string;
-  install: (args: DaemonServiceInstallArgs) => Promise<void>;
-  uninstall: (args: {
-    env: Record<string, string | undefined>;
-    stdout: NodeJS.WritableStream;
-  }) => Promise<void>;
-  restart: (args: {
-    env: Record<string, string | undefined>;
-    stdout: NodeJS.WritableStream;
-  }) => Promise<void>;
-  isLoaded: (args: { env: Record<string, string | undefined> }) => Promise<boolean>;
-};
-
-function resolveDaemonService(): DaemonService {
-  if (process.platform === "darwin") {
-    return {
-      label: "LaunchAgent",
-      loadedText: "loaded",
-      notLoadedText: "not loaded",
-      install: async (args) => {
-        await installLaunchAgent(args);
-      },
-      uninstall: async (args) => {
-        await uninstallLaunchAgent(args);
-      },
-      restart: async (args) => {
-        await restartLaunchAgent(args);
-      },
-      isLoaded: async () => isLaunchAgentLoaded(),
-    };
-  }
-
-  if (process.platform === "linux") {
-    return {
-      label: "systemd",
-      loadedText: "enabled",
-      notLoadedText: "disabled",
-      install: async (args) => {
-        await installSystemdService(args);
-      },
-      uninstall: async (args) => {
-        await uninstallSystemdService(args);
-      },
-      restart: async (args) => {
-        await restartSystemdService(args);
-      },
-      isLoaded: async () => isSystemdServiceEnabled(),
-    };
-  }
-
-  if (process.platform === "win32") {
-    return {
-      label: "Scheduled Task",
-      loadedText: "registered",
-      notLoadedText: "missing",
-      install: async (args) => {
-        await installScheduledTask(args);
-      },
-      uninstall: async (args) => {
-        await uninstallScheduledTask(args);
-      },
-      restart: async (args) => {
-        await restartScheduledTask(args);
-      },
-      isLoaded: async () => isScheduledTaskInstalled(),
-    };
-  }
-
-  throw new Error(`Daemon service install not supported on ${process.platform}`);
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForHealth({
-  fetchImpl,
-  port,
-  timeoutMs,
-}: {
-  fetchImpl: typeof fetch;
-  port: number;
-  timeoutMs: number;
-}): Promise<void> {
-  const url = `http://${DAEMON_HOST}:${port}/health`;
-  const startedAt = Date.now();
-  // Simple polling; avoids bringing in extra deps.
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const res = await fetchImpl(url, { method: "GET" });
-      if (res.ok) return;
-    } catch {
-      // ignore
-    }
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  throw new Error(`Daemon not reachable at ${url}`);
-}
-
-async function waitForHealthWithRetries({
-  fetchImpl,
-  port,
-  attempts,
-  timeoutMs,
-  delayMs,
-}: {
-  fetchImpl: typeof fetch;
-  port: number;
-  attempts: number;
-  timeoutMs: number;
-  delayMs: number;
-}): Promise<void> {
-  let lastError: unknown = null;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      await waitForHealth({ fetchImpl, port, timeoutMs });
-      return;
-    } catch (err) {
-      lastError = err;
-      if (attempt < attempts - 1) {
-        const backoff = Math.round(delayMs * 1.6 ** attempt);
-        await sleep(backoff);
-      }
-    }
-  }
-  throw lastError instanceof Error
-    ? lastError
-    : new Error(`Daemon not reachable at ${DAEMON_HOST}:${port}`);
-}
-
-async function checkAuth({
-  fetchImpl,
-  token,
-  port,
-}: {
-  fetchImpl: typeof fetch;
-  token: string;
-  port: number;
-}): Promise<boolean> {
-  try {
-    const res = await fetchImpl(`http://${DAEMON_HOST}:${port}/v1/ping`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-async function checkAuthWithRetries({
-  fetchImpl,
-  token,
-  port,
-  attempts,
-  delayMs,
-}: {
-  fetchImpl: typeof fetch;
-  token: string;
-  port: number;
-  attempts: number;
-  delayMs: number;
-}): Promise<boolean> {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const ok = await checkAuth({ fetchImpl, token, port });
-    if (ok) return true;
-    if (attempt < attempts - 1) {
-      const backoff = Math.round(delayMs * 1.4 ** attempt);
-      await sleep(backoff);
-    }
-  }
-  return false;
-}
-
-function resolveRepoRootForDev(): string {
-  const argv1 = process.argv[1];
-  if (!argv1) throw new Error("Unable to resolve repo root");
-  const normalized = path.resolve(argv1);
-  const parts = normalized.split(path.sep);
-  const srcIndex = parts.lastIndexOf("src");
-  if (srcIndex === -1) throw new Error("Dev mode requires running from repo (src/cli.ts)");
-  return parts.slice(0, srcIndex).join(path.sep);
-}
-
-async function resolveTypeScriptRegisterPath(repoRoot: string): Promise<string> {
-  const candidate = path.join(repoRoot, "scripts", "register-typescript.mjs");
-  await fs.access(candidate);
-  return candidate;
-}
-
-async function resolveDaemonProgramArguments({
-  dev,
-}: {
-  dev: boolean;
-}): Promise<{ programArguments: string[]; workingDirectory?: string }> {
-  const nodePath = process.execPath;
-  if (!dev) {
-    try {
-      const cliEntrypointPath = await resolveCliEntrypointPathForService();
-      return {
-        programArguments: [nodePath, cliEntrypointPath, "daemon", "run"],
-        workingDirectory: undefined,
-      };
-    } catch (error) {
-      const base = path.basename(nodePath).toLowerCase();
-      const isNodeRuntime = base === "node" || base === "node.exe";
-      if (!isNodeRuntime) {
-        return {
-          programArguments: [nodePath, "daemon", "run"],
-          workingDirectory: undefined,
-        };
-      }
-      throw error;
-    }
-  }
-  const repoRoot = resolveRepoRootForDev();
-  const registerPath = await resolveTypeScriptRegisterPath(repoRoot);
-  const devCliPath = path.join(repoRoot, "src", "cli.ts");
-  await fs.access(devCliPath);
-  return {
-    programArguments: [nodePath, "--import", registerPath, devCliPath, "daemon", "run"],
-    workingDirectory: repoRoot,
-  };
-}
-
-function formatProgramArguments(args: string[]): string {
-  return args
-    .map((arg) => {
-      if (!/[\s"]/g.test(arg)) return arg;
-      return `"${arg.replace(/"/g, '\\"')}"`;
-    })
-    .join(" ");
-}
-
-async function readInstalledDaemonCommand(
-  env: Record<string, string | undefined>,
-): Promise<{ programArguments: string[]; workingDirectory?: string } | null> {
-  if (process.platform === "darwin") return readLaunchAgentProgramArguments(env);
-  if (process.platform === "linux") return readSystemdServiceExecStart(env);
-  if (process.platform === "win32") return readScheduledTaskCommand(env);
-  return null;
-}
-
 function writeWindowsContainerInstallInstructions({
   stdout,
   port,
@@ -348,35 +83,6 @@ function writeWindowsContainerInstallInstructions({
     "Run `summarize daemon install --token <TOKEN>` each time the container starts, or add that command to your container startup.\n",
   );
   stdout.write(`Publish port ${port}:${port} so the host browser can reach the daemon.\n`);
-}
-
-async function startDetachedContainerDaemon({
-  env,
-  programArguments,
-  workingDirectory,
-}: {
-  env: Record<string, string | undefined>;
-  programArguments: string[];
-  workingDirectory?: string;
-}): Promise<void> {
-  const { logDir, stdoutPath, stderrPath } = resolveDaemonLogPaths(env);
-  await fs.mkdir(logDir, { recursive: true });
-
-  const stdoutFd = openSync(stdoutPath, "a");
-  const stderrFd = openSync(stderrPath, "a");
-  try {
-    const child = spawn(programArguments[0] ?? process.execPath, programArguments.slice(1), {
-      cwd: workingDirectory,
-      detached: true,
-      env: { ...process.env, ...env },
-      stdio: ["ignore", stdoutFd, stderrFd],
-      windowsHide: true,
-    });
-    child.unref();
-  } finally {
-    closeSync(stdoutFd);
-    closeSync(stderrFd);
-  }
 }
 
 export async function handleDaemonRequest({

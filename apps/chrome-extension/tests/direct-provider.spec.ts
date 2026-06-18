@@ -160,6 +160,20 @@ test("direct provider parses Gemini streaming text", async () => {
   expect(result.text).toBe("Gemini works");
 });
 
+test("direct provider parses a final SSE event without a blank-line terminator", async () => {
+  const result = await completeDirectText({
+    model: "openai/test-model",
+    providerSettings: providerSettings("openai"),
+    system: "System",
+    prompt: "Prompt",
+    signal: new AbortController().signal,
+    fetchImpl: async () =>
+      sseResponse([`data: ${JSON.stringify({ choices: [{ delta: { content: "complete" } }] })}`]),
+  });
+
+  expect(result.text).toBe("complete");
+});
+
 test("direct provider accepts CRLF SSE framing and OpenAI tool calls", async () => {
   const assistant = await finalAssistant({
     model: "openai/test-model",
