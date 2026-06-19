@@ -11,7 +11,7 @@ import { loadSettings } from "./settings";
 
 /** Build the daemon origin (scheme + host + port) for an explicit port. */
 export function daemonOrigin(port: string): string {
-  return `http://127.0.0.1:${port}`;
+  return new URL(`http://127.0.0.1:${port}`).origin;
 }
 
 /** Resolve the daemon origin from stored settings (defaults to port 8787). */
